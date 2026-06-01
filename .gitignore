@@ -24,9 +24,38 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
+# Environment files
 .env
+backend/.env
+audio-processor/.env
 
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Go build artifacts
+backend/tmp/
+backend/bin/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+audio-processor/tmp/
+*.egg-info/
+
+# Node / Vue
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# macOS
+.DS_Store
+
+# Audio working files (large, regenerated on demand)
+*.wav
+*.mp3
+*.webm
+*.opus
