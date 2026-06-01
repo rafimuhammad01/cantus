@@ -30,7 +30,7 @@ Users iterate on the **30s preview** (fast, ~1-2s per key) to find the right key
 - [ ] Set up pre-commit framework: create `.pre-commit-config.yaml`, run `pre-commit install`
 - [ ] Install linting tools: `brew install golangci-lint`, `pip install ruff black pre-commit`, `npm i -D eslint prettier` (in frontend/)
 - [ ] `brew install yt-dlp ffmpeg` (prerequisite for backend + audio processor)
-- [ ] Remove Spotify references from CLAUDE.md and .env.example (Spotify was dropped)
+- [x] Remove Spotify references from CLAUDE.md and .env.example (Spotify was dropped)
 
 ## Group 2 — Go Backend Foundation
 - [ ] Initialize Go module (`go mod init singing-enhancement/backend`)
