@@ -48,6 +48,7 @@ cp audio-processor/.env.example audio-processor/.env
 
 Required vars:
 - `DEVICE` — `cpu`, `mps` (Apple Silicon), or `cuda`
+- `VIDEO_ID_SIGNING_KEY` — 32+ random bytes used to HMAC-sign videoIds. Generate with `openssl rand -hex 32`. Never commit. Backend fails to start if missing or < 32 bytes.
 - All other vars have sensible defaults in `.env.example`
 
 ## Architecture
@@ -55,26 +56,31 @@ Required vars:
 ```
 Browser (Vue 3)
   └── HTTP/SSE ──► Go :8080
-                    ├── yt-dlp (YouTube search + audio download)
+                    ├── yt-dlp (audio download by videoId — NOT used for search)
                     └── HTTP ──► Python :8090
+                                  ├── ytmusicapi (song-entity search → canonical videoId)
                                   ├── Demucs (vocal separation)
                                   ├── CREPE (melody extraction from vocals stem)
                                   └── librosa + pyrubberband (pitch shift)
 ```
 
+**Search is song-entity-level, not raw YouTube.** `ytmusicapi` with `filter="songs"` returns one result per song (artist + album + canonical YouTube videoId), not per video. This avoids two problems with raw yt-dlp search: (1) abuse vector — handlers could be tricked into processing any YouTube video; (2) noise — same song appearing as official/lyric/live/cover variants.
+
+**All audio handlers are HMAC-gated.** `/api/songs/search` returns `{videoId, sig}` per result; every downstream handler requires `sig` and rejects mismatches with 400. Defense in depth against direct videoId injection.
+
 ## API Endpoints
 
-Three-stage pipeline — users iterate on the fast preview, then commit to the slow full generate:
+Three-stage pipeline — users iterate on the fast preview, then commit to the slow full generate. See `FLOW.md` for the full end-to-end walkthrough (what runs in browser vs Go vs Python at each stage, cache layout, cost timeline).
 
 | Endpoint | Speed | Purpose |
 |---|---|---|
-| `GET /api/songs/search?q=` | ~2s | yt-dlp YouTube search results |
-| `GET /api/preview/:videoId` | ~5s cold / instant warm | 30s clip, original key |
-| `POST /api/preview-shift` `{ video_id, semitones }` | ~1-2s cold / instant warm | 30s clip, shifted key |
-| `POST /api/generate` `{ video_id, semitones }` | 90-180s cold / faster with stem cache | Full pipeline, returns job_id |
-| `GET /api/status/:jobId` | SSE stream | Pipeline progress |
-| `GET /api/audio/:videoId/:semitones` | instant (cached) | Full instrumental MP3 |
-| `GET /api/melody/:videoId/:semitones` | instant (cached) | melody.json for pitch display |
+| `GET /api/songs/search?q=` | ~1-2s | ytmusicapi song-entity search; returns `{videoId, sig, title, artist, album, ...}` |
+| `GET /api/preview/:videoId?sig=` | ~5s cold / instant warm | 30s clip, original key |
+| `POST /api/preview-shift` `{ video_id, sig, semitones }` | ~1-2s cold / instant warm | 30s clip, shifted key |
+| `POST /api/generate` `{ video_id, sig, semitones }` | 90-180s cold / faster with stem cache | Full pipeline, returns job_id |
+| `GET /api/status/:jobId` | SSE stream | Pipeline progress (jobId is server-issued, no sig needed) |
+| `GET /api/audio/:videoId/:semitones?sig=` | instant (cached) | Full instrumental MP3 |
+| `GET /api/melody/:videoId/:semitones?sig=` | instant (cached) | melody.json for pitch display |
 
 ## Go Module
 
@@ -84,12 +90,16 @@ Module path: `singing-enhancement/backend`
 
 - **Demucs first run**: downloads ~1GB model weights. Subsequent runs are fast.
 - **CREPE first run**: downloads model weights on first use.
-- **yt-dlp**: handles both search and audio download — no Spotify or other API key needed. Legal gray area for personal use; replace with a licensed source before public launch. Use `--cookies-from-browser chrome` if yt-dlp gets rate-limited.
-- **Video ID validation**: backend validates all video IDs with `^[A-Za-z0-9_-]{11}$` before any yt-dlp call.
+- **ytmusicapi for search, yt-dlp for audio**: split intentional. ytmusicapi gives song entities + canonical YouTube videoIds in one call; yt-dlp downloads the audio for that videoId. Both gray-area ToS for personal use; both swappable for licensed sources before public launch. Use `--cookies-from-browser chrome` if yt-dlp gets rate-limited. Pin `ytmusicapi` version in `requirements.txt` (unofficial web API can drift).
+- **Video ID validation**: backend validates all video IDs with `^[A-Za-z0-9_-]{11}$` AND requires a valid HMAC sig before any yt-dlp call. Regex first (cheap), sig second.
+- **HMAC sig flow**: `/api/songs/search` returns `{videoId, sig}`; frontend stores both and passes `sig` on every audio call. Handlers use constant-time compare (`hmac.Equal`). Rotating `VIDEO_ID_SIGNING_KEY` invalidates outstanding sigs — users would need to re-search; acceptable.
 - **CREPE runs on isolated vocals** (Demucs output), NOT the full mix — CREPE is monophonic and would track bass/guitar on a full mix.
 - **Semitones capped at ±5** — pyrubberband artifacts become audible beyond that range.
-- **tmp/ dirs**: audio working files. Both are gitignored. Files auto-deleted after 1 hour by cleanup goroutine.
+- **Cache is TTL-based, not permanent**: files under `tmp/cache/` live for `CACHE_TTL_HOURS` (default 24h). A cleanup goroutine deletes stale files every `CACHE_CLEANUP_INTERVAL_MIN` (default 10 min). A user returning to a song after TTL expires re-pays the 90-180s full pipeline — accepted tradeoff, cheaper than indefinite cold storage. Phase 2 (cloud) will use S3/R2/GCS lifecycle policies for the same effect.
+- **JobStore record TTL is separate (1h)** — that cleanup applies to in-memory job status records, not cache files.
+- **tmp/ dirs**: gitignored. `tmp/cache/` holds the TTL'd cache; other `tmp/` files are scratch working space.
 - **YouTubeService interface** in `backend/services/youtube.go`: swap yt-dlp for a licensed provider without touching handler code.
+- **Storage interface** in `backend/services/storage.go`: handlers/services touch `LocalPath / Has / Commit / Open` only — never filepaths directly. Phase 1 = `LocalDiskStorage`; Phase 2 cloud backend swaps in without handler changes.
 
 ## Testing Endpoints
 
