@@ -6,21 +6,37 @@ repos:
       - id: end-of-file-fixer
       - id: check-merge-conflict
 
-  - repo: https://github.com/dnephin/pre-commit-golang
-    rev: v0.5.1
+  - repo: local
     hooks:
       - id: go-fmt
+        name: go fmt
+        language: system
+        entry: bash -c 'cd backend && gofmt -l -w .'
+        files: ^backend/.*\.go$
+        pass_filenames: false
       - id: go-vet
+        name: go vet
+        language: system
+        entry: bash -c 'cd backend && go vet ./...'
+        files: ^backend/.*\.go$
+        pass_filenames: false
       - id: golangci-lint
+        name: golangci-lint
+        language: system
+        entry: bash -c 'cd backend && golangci-lint run ./...'
+        files: ^backend/.*\.go$
+        pass_filenames: false
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.4.4
     hooks:
       - id: ruff
+        files: ^audio-processor/.*\.py$
       - id: ruff-format
+        files: ^audio-processor/.*\.py$
 
   - repo: https://github.com/pre-commit/mirrors-prettier
     rev: v4.0.0-alpha.8
     hooks:
       - id: prettier
-        files: \.(ts|vue|json|css)$
+        files: ^frontend/.*\.(ts|vue|json|css)$

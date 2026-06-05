@@ -34,11 +34,13 @@ Users iterate on the **30s preview** (fast, ~1-2s per key) to find the right key
 - [x] Remove Spotify references from CLAUDE.md and .env.example (Spotify was dropped)
 
 ## Group 2 — Go Backend Foundation
-- [ ] Initialize Go module (`go mod init cantus/backend`)
-- [ ] Chi router with CORS middleware (env-configurable origins) and /health endpoint
-- [ ] Config loading from .env (`os.Getenv`, fail-fast on missing required vars)
+- [x] Initialize Go module (`go mod init cantus/backend`)
+- [x] Chi router with CORS middleware (env-configurable origins) and /health endpoint
+- [x] Config loading from .env (`os.Getenv`, fail-fast on missing required vars)
 - [ ] Models: SearchResult, Job, JobStatus, ProcessRequest
-- [ ] JobStore service (in-memory map + `sync.RWMutex` + 1hr cleanup goroutine)
+- [ ] HMAC signing helpers (`services/sign.go`): sign/validSig with constant-time compare, key loaded from config
+- [ ] JobStore service (in-memory map + `sync.RWMutex` + 1hr cleanup goroutine — for job records, not cache files)
+- [ ] Storage interface + LocalDiskStorage (`services/storage.go`): LocalPath/Has/Commit/Open, TTL-aware cleanup goroutine
 - [ ] Structured logging setup with zerolog, request-id middleware
 
 ## Group 3 — YouTube Search + Preview Download
