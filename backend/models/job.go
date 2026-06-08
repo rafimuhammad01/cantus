@@ -11,7 +11,10 @@ type JobStatus string
 const (
 	StatusQueued      JobStatus = "queued"
 	StatusDownloading JobStatus = "downloading"
-	StatusProcessing  JobStatus = "processing"
+	StatusSeparating  JobStatus = "separating"
+	StatusMelody      JobStatus = "melody"
+	StatusShifting    JobStatus = "shifting"
+	StatusProcessing  JobStatus = "processing" // retained for backward compat; not used by JobRunner
 	StatusDone        JobStatus = "done"
 	StatusError       JobStatus = "error"
 )

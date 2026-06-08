@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,14 +12,25 @@ import (
 
 	"cantus/backend/api"
 	"cantus/backend/logger"
+	"cantus/backend/services"
 )
+
+// fakeYouTubeService is a no-op stub that satisfies services.YouTubeService for router tests.
+type fakeYouTubeService struct{}
+
+func (f *fakeYouTubeService) Search(_ context.Context, _ string, _, _ int) (services.SearchPage, error) {
+	return services.SearchPage{}, nil
+}
+
+func (f *fakeYouTubeService) DownloadPreview(_ context.Context, _ string) error { return nil }
+func (f *fakeYouTubeService) DownloadFull(_ context.Context, _ string) error    { return nil }
 
 func TestRouter_Health(t *testing.T) {
 	log, err := logger.New(io.Discard, "info")
 	if err != nil {
 		t.Fatalf("logger.New: %v", err)
 	}
-	router := api.NewRouter([]string{"http://localhost:5173"}, log)
+	router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
@@ -48,7 +60,7 @@ func TestRouter_CORS_AllowedOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logger.New: %v", err)
 	}
-	router := api.NewRouter([]string{"http://localhost:5173"}, log)
+	router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	req.Header.Set("Origin", "http://localhost:5173")
@@ -69,7 +81,7 @@ func TestRouter_CORS_DisallowedOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logger.New: %v", err)
 	}
-	router := api.NewRouter([]string{"http://localhost:5173"}, log)
+	router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	req.Header.Set("Origin", "http://evil.com")
@@ -90,7 +102,7 @@ func TestRouter_CORS_Preflight(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logger.New: %v", err)
 	}
-	router := api.NewRouter([]string{"http://localhost:5173"}, log)
+	router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodOptions, "/health", nil)
 	req.Header.Set("Origin", "http://localhost:5173")
@@ -128,7 +140,7 @@ func TestRouter_SetsRequestIDHeader(t *testing.T) {
 			if err != nil {
 				t.Fatalf("logger.New: %v", err)
 			}
-			router := api.NewRouter([]string{"http://localhost:5173"}, log)
+			router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil)
 
 			req := httptest.NewRequest(http.MethodGet, "/health", nil)
 			rec := httptest.NewRecorder()
@@ -158,7 +170,7 @@ func TestRouter_LogsRequest(t *testing.T) {
 			if err != nil {
 				t.Fatalf("logger.New: %v", err)
 			}
-			router := api.NewRouter([]string{"http://localhost:5173"}, log)
+			router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil)
 
 			req := httptest.NewRequest(http.MethodGet, "/health", nil)
 			rec := httptest.NewRecorder()

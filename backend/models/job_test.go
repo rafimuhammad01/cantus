@@ -17,6 +17,9 @@ func TestJobStatus_Constants(t *testing.T) {
 	}{
 		{name: "queued", got: models.StatusQueued, want: "queued"},
 		{name: "downloading", got: models.StatusDownloading, want: "downloading"},
+		{name: "separating", got: models.StatusSeparating, want: "separating"},
+		{name: "melody", got: models.StatusMelody, want: "melody"},
+		{name: "shifting", got: models.StatusShifting, want: "shifting"},
 		{name: "processing", got: models.StatusProcessing, want: "processing"},
 		{name: "done", got: models.StatusDone, want: "done"},
 		{name: "error", got: models.StatusError, want: "error"},

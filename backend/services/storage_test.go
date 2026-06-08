@@ -46,6 +46,40 @@ func mustNewLocalDiskStorage(t *testing.T, root string, ttl time.Duration) *serv
 	return s
 }
 
+// TestLocalDiskStorage_LocalPath_AlwaysAbsolute verifies that LocalPath returns
+// an absolute path even when the storage was constructed with a relative root —
+// paths cross service boundaries (Go → Python) and must not depend on the caller's CWD.
+func TestLocalDiskStorage_LocalPath_AlwaysAbsolute(t *testing.T) {
+	tests := []struct {
+		name string
+	}{
+		{name: "relative root resolves to absolute LocalPath"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("os.Getwd: %v", err)
+			}
+			t.Cleanup(func() { _ = os.Chdir(cwd) })
+			if err := os.Chdir(t.TempDir()); err != nil {
+				t.Fatalf("os.Chdir: %v", err)
+			}
+
+			s := mustNewLocalDiskStorage(t, "./relroot", time.Hour)
+
+			got, err := s.LocalPath(context.Background(), "dQw4w9WgXcQ", "preview.mp3")
+			if err != nil {
+				t.Fatalf("LocalPath: unexpected error: %v", err)
+			}
+			if !filepath.IsAbs(got) {
+				t.Errorf("LocalPath = %q: want absolute path", got)
+			}
+		})
+	}
+}
+
 // TestLocalDiskStorage_LocalPath verifies that LocalPath returns a pure
 // path derived from root+videoID+name without performing any I/O.
 func TestLocalDiskStorage_LocalPath(t *testing.T) {

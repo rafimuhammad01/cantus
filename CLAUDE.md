@@ -22,10 +22,12 @@ cd frontend && npm run dev
 Install these before anything else:
 
 ```bash
-brew install yt-dlp ffmpeg
+brew install yt-dlp ffmpeg rubberband
 ```
 
-Python 3.11+ required. Install audio deps (first run downloads PyTorch + Demucs models — slow, ~5-10 min):
+`rubberband` is the CLI that `pyrubberband` shells out to for pitch shifting.
+
+**Python 3.12 required** (not 3.13+). Reason: CREPE depends on TensorFlow, which doesn't yet ship wheels for newer Python versions. Match the proven prototype config. Install with `brew install python@3.12`, then `python3.12 -m venv .venv`. Install audio deps (first run downloads PyTorch + Demucs models — slow, ~5-10 min):
 
 ```bash
 cd audio-processor && pip install -r requirements.txt
@@ -61,7 +63,7 @@ Browser (Vue 3)
                                   ├── ytmusicapi (song-entity search → canonical videoId)
                                   ├── Demucs (vocal separation)
                                   ├── CREPE (melody extraction from vocals stem)
-                                  └── librosa + pyrubberband (pitch shift)
+                                  └── pyrubberband + soundfile (pitch shift + WAV I/O)
 ```
 
 **Search is song-entity-level, not raw YouTube.** `ytmusicapi` with `filter="songs"` returns one result per song (artist + album + canonical YouTube videoId), not per video. This avoids two problems with raw yt-dlp search: (1) abuse vector — handlers could be tricked into processing any YouTube video; (2) noise — same song appearing as official/lyric/live/cover variants.
@@ -94,7 +96,7 @@ Module path: `cantus/backend`
 - **Video ID validation**: backend validates all video IDs with `^[A-Za-z0-9_-]{11}$` AND requires a valid HMAC sig before any yt-dlp call. Regex first (cheap), sig second.
 - **HMAC sig flow**: `/api/songs/search` returns `{videoId, sig}`; frontend stores both and passes `sig` on every audio call. Handlers use constant-time compare (`hmac.Equal`). Rotating `VIDEO_ID_SIGNING_KEY` invalidates outstanding sigs — users would need to re-search; acceptable.
 - **CREPE runs on isolated vocals** (Demucs output), NOT the full mix — CREPE is monophonic and would track bass/guitar on a full mix.
-- **Semitones capped at ±5** — pyrubberband artifacts become audible beyond that range.
+- **Semitones capped at ±12** (one octave) — covers practical singing range needs (e.g., A → D = -7 semitones). Original conservative cap of ±5 assumed full-mix shifting; since the full-song path now shifts Demucs-isolated instrumental (no vocals → no formant problem), pyrubberband can handle ±12 with only mild artifacts. Beyond ±12 the music genuinely starts sounding wrong; keep the bound.
 - **Cache is TTL-based, not permanent**: files under `tmp/cache/` live for `CACHE_TTL_HOURS` (default 24h). A cleanup goroutine deletes stale files every `CACHE_CLEANUP_INTERVAL_MIN` (default 10 min). A user returning to a song after TTL expires re-pays the 90-180s full pipeline — accepted tradeoff, cheaper than indefinite cold storage. Phase 2 (cloud) will use S3/R2/GCS lifecycle policies for the same effect.
 - **JobStore record TTL is separate (1h)** — that cleanup applies to in-memory job status records, not cache files.
 - **tmp/ dirs**: gitignored. `tmp/cache/` holds the TTL'd cache; other `tmp/` files are scratch working space.

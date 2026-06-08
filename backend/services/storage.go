@@ -25,12 +25,17 @@ type LocalDiskStorage struct {
 }
 
 // NewLocalDiskStorage creates a LocalDiskStorage rooted at root with the given TTL.
-// It creates root (and any parents) if it does not exist.
+// It creates root (and any parents) if it does not exist. root is resolved to an
+// absolute path so LocalPath results are portable across services with different CWDs.
 func NewLocalDiskStorage(root string, ttl time.Duration) (*LocalDiskStorage, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("storage: MkdirAll(%q): %w", root, err)
 	}
-	return &LocalDiskStorage{root: root, ttl: ttl}, nil
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("storage: Abs(%q): %w", root, err)
+	}
+	return &LocalDiskStorage{root: absRoot, ttl: ttl}, nil
 }
 
 // LocalPath returns the absolute path for (videoID, name) without performing I/O.

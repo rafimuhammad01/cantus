@@ -1,0 +1,100 @@
+// Package main is the entry point for the cantus backend server.
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"cantus/backend/api"
+	"cantus/backend/config"
+	"cantus/backend/logger"
+	"cantus/backend/services"
+)
+
+func main() {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		os.Exit(1)
+	}
+
+	log, err := logger.New(os.Stdout, cfg.LogLevel)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "logger: %v\n", err)
+		os.Exit(1)
+	}
+
+	signer, err := services.NewSigner(cfg.VideoIDSigningKey)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to create signer")
+	}
+
+	storage, err := services.NewLocalDiskStorage(cfg.CacheDir, time.Duration(cfg.CacheTTLHours)*time.Hour)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to create storage")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	storage.StartCleanup(ctx, time.Duration(cfg.CacheCleanupIntervalMin)*time.Minute)
+
+	svc := services.NewPythonYouTubeService(
+		cfg.PythonProcessorURL,
+		&http.Client{Timeout: 30 * time.Second},
+		signer,
+		storage,
+		services.ExecRunner{},
+	)
+
+	var origins []string
+	for _, o := range strings.Split(cfg.AllowedOrigins, ",") {
+		if trimmed := strings.TrimSpace(o); trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+
+	processor := services.NewPythonProcessorClient(cfg.PythonProcessorURL, &http.Client{Timeout: 5 * time.Minute})
+
+	jobStore := services.NewJobStore(1 * time.Hour)
+	jobStore.StartCleanup(ctx, 5*time.Minute)
+
+	maxJobs := cfg.MaxConcurrentJobs
+	jobRunner := services.NewJobRunner(svc, storage, processor, jobStore, maxJobs)
+
+	r := api.NewRouter(origins, log, svc, signer, storage, processor, jobRunner, jobStore)
+
+	srv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	go func() {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		<-quit
+
+		cancel()
+
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Error().Err(err).Msg("graceful shutdown failed")
+		}
+	}()
+
+	log.Info().Int("port", cfg.Port).Str("cache_dir", cfg.CacheDir).Msg("backend listening")
+
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal().Err(err).Msg("server failed")
+	}
+}

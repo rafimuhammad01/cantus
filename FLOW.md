@@ -77,7 +77,7 @@ Browser ──POST /api/preview-shift {video_id, sig, semitones:-2}──► Go 
                                                                 │                         output: -2.mp3 }
                                                                 │                       │
                                                                 │                       ├── pyrubberband (preserves tempo)
-                                                                │                       ├── librosa write WAV
+                                                                │                       ├── soundfile write WAV
                                                                 │                       └── ffmpeg → 128kbps MP3
                                                                 │                       (~1-2s for 30s clip)
                                                                 └── serve -2.mp3
