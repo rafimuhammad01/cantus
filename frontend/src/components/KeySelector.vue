@@ -1,16 +1,25 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { semitonesToLabel } from "@/utils/labels";
 
-const props = defineProps<{ semitones: number; disabled?: boolean }>();
+const props = defineProps<{
+  semitones: number;
+  disabled?: boolean;
+  originalKey?: string;
+  transposedKey?: string;
+}>();
 const emit = defineEmits<{ change: [value: number] }>();
 
 const MIN = -12;
 const MAX = 12;
 
-const label = computed(() => {
-  const n = props.semitones;
-  if (n === 0) return "Tr. 0";
-  return `Tr. ${n > 0 ? "+" : ""}${n}`;
+const primaryLabel = computed(() => semitonesToLabel(props.semitones));
+
+const secondaryLabel = computed(() => {
+  if (!props.originalKey) return "";
+  if (props.semitones === 0) return `Key: ${props.originalKey}`;
+  if (!props.transposedKey) return props.originalKey;
+  return `${props.originalKey} → ${props.transposedKey}`;
 });
 
 const canDec = computed(() => !props.disabled && props.semitones > MIN);
@@ -25,29 +34,37 @@ function inc() {
 </script>
 
 <template>
-  <div
-    class="inline-flex items-center rounded-full bg-[#1a1822] border border-[#2a2730] overflow-hidden"
-  >
-    <button
-      @click="dec"
-      :disabled="!canDec"
-      class="px-4 py-2 text-xl text-white hover:bg-[#23202c] disabled:text-gray-600 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
-      aria-label="Transpose down one semitone"
-    >
-      −
-    </button>
+  <div class="flex flex-col items-center gap-1.5">
     <div
-      class="px-4 py-2 text-white font-mono tabular-nums select-none min-w-[5rem] text-center"
+      class="inline-flex items-center gap-3 px-2 py-1.5 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)]"
     >
-      {{ label }}
+      <button
+        @click="dec"
+        :disabled="!canDec"
+        class="w-9 h-9 rounded-full flex items-center justify-center text-[var(--color-text)] text-lg hover:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-faint)] disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+        aria-label="Lower one step"
+      >
+        −
+      </button>
+      <div
+        class="min-w-[10.5rem] text-center text-[15px] font-medium text-[var(--color-text)] select-none"
+      >
+        {{ primaryLabel }}
+      </div>
+      <button
+        @click="inc"
+        :disabled="!canInc"
+        class="w-9 h-9 rounded-full flex items-center justify-center text-[var(--color-text)] text-lg hover:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-faint)] disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+        aria-label="Higher one step"
+      >
+        +
+      </button>
     </div>
-    <button
-      @click="inc"
-      :disabled="!canInc"
-      class="px-4 py-2 text-xl text-white hover:bg-[#23202c] disabled:text-gray-600 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
-      aria-label="Transpose up one semitone"
+    <div
+      v-if="secondaryLabel"
+      class="serif-italic text-[14px] text-[var(--color-text-muted)] tracking-wide"
     >
-      +
-    </button>
+      {{ secondaryLabel }}
+    </div>
   </div>
 </template>
