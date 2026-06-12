@@ -22,7 +22,7 @@ function onClick() {
 <template>
   <button
     @click="onClick"
-    class="w-full flex items-center gap-4 p-3 rounded-xl bg-[#1a1822] hover:bg-[#23202c] border border-[#2a2730] hover:border-[#3a3640] transition-colors text-left"
+    class="group w-full flex items-center gap-4 px-2 py-3 border-b border-[var(--color-border)] hover:bg-[var(--color-surface)] transition-colors text-left"
   >
     <img
       :src="result.thumbnail_url"
@@ -31,13 +31,17 @@ function onClick() {
       loading="lazy"
     />
     <div class="min-w-0 flex-1">
-      <div class="text-white font-medium truncate">{{ result.title }}</div>
-      <div class="text-sm text-gray-400 truncate">
+      <div
+        class="font-serif text-[17px] text-[var(--color-text)] truncate group-hover:underline decoration-[var(--color-accent)] decoration-1 underline-offset-4"
+      >
+        {{ result.title }}
+      </div>
+      <div class="text-[13px] text-[var(--color-text-muted)] truncate mt-0.5">
         {{ result.artist }}
         <template v-if="result.album"> · {{ result.album }}</template>
       </div>
     </div>
-    <div class="text-sm text-gray-500 shrink-0">
+    <div class="text-[13px] text-[var(--color-text-faint)] shrink-0 tnum">
       {{ formatDuration(result.duration_sec) }}
     </div>
   </button>

@@ -2,7 +2,7 @@
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useSearchStore } from "@/stores/search";
 import SearchBar from "@/components/SearchBar.vue";
-import SongCard from "@/components/SongCard.vue";
+import SongRow from "@/components/SongRow.vue";
 
 const search = useSearchStore();
 const sentinel = ref<HTMLDivElement | null>(null);
@@ -83,7 +83,7 @@ onUnmounted(() => {
 
       <!-- Results list -->
       <div v-if="search.results.length > 0" class="space-y-3">
-        <SongCard v-for="r in search.results" :key="r.video_id" :result="r" />
+        <SongRow v-for="r in search.results" :key="r.video_id" :result="r" />
       </div>
 
       <!-- Empty state after a search that returned nothing -->
