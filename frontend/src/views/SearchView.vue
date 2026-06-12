@@ -49,7 +49,14 @@ onUnmounted(() => {
       v-if="showHero"
       class="flex-1 flex flex-col items-center justify-center px-4"
     >
-      <h1 class="text-6xl font-bold text-white mb-12 tracking-tight">cantus</h1>
+      <h1
+        class="font-serif italic text-[96px] leading-none text-[var(--color-text)] mb-2 tracking-tight"
+      >
+        cantus
+      </h1>
+      <p class="text-[14px] text-[var(--color-text-muted)] mb-12">
+        Sing any song. In your key.
+      </p>
       <div class="w-full max-w-xl">
         <SearchBar @submit="onSearchSubmit" />
       </div>
@@ -64,25 +71,33 @@ onUnmounted(() => {
       <!-- Loading skeleton on first fetch -->
       <div
         v-if="search.loading && search.results.length === 0"
-        class="space-y-3"
+        class="divide-y divide-[var(--color-border)]"
       >
-        <div
-          v-for="i in 5"
-          :key="i"
-          class="h-20 rounded-xl bg-[#1a1822] border border-[#2a2730] animate-pulse"
-        />
+        <div v-for="i in 5" :key="i" class="flex items-center gap-4 px-2 py-3">
+          <div
+            class="w-14 h-14 rounded-lg bg-[var(--color-surface-2)] animate-pulse shrink-0"
+          />
+          <div class="flex-1 space-y-2">
+            <div
+              class="h-4 w-2/3 rounded bg-[var(--color-surface-2)] animate-pulse"
+            />
+            <div
+              class="h-3 w-1/2 rounded bg-[var(--color-surface-2)] animate-pulse"
+            />
+          </div>
+        </div>
       </div>
 
       <!-- Error state -->
       <div
         v-if="search.error"
-        class="p-4 rounded-xl bg-red-900/30 border border-red-800 text-red-200"
+        class="p-4 rounded-xl bg-[var(--color-surface)] border border-[var(--color-danger)]/60 text-[var(--color-danger)]"
       >
         {{ search.error }}
       </div>
 
       <!-- Results list -->
-      <div v-if="search.results.length > 0" class="space-y-3">
+      <div v-if="search.results.length > 0">
         <SongRow v-for="r in search.results" :key="r.video_id" :result="r" />
       </div>
 
@@ -96,7 +111,7 @@ onUnmounted(() => {
         "
         class="text-gray-500 text-center py-12"
       >
-        No songs found.
+        Nothing matched. Try a different spelling.
       </div>
 
       <!-- Infinite scroll sentinel -->
