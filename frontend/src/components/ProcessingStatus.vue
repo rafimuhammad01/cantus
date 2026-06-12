@@ -7,96 +7,109 @@ const props = defineProps<{
   message: string;
 }>();
 
-interface StageMeta {
+interface Step {
+  key: "download" | "separate" | "melody" | "shift" | "ready";
   label: string;
-  /** Progress percentage when this stage is active (0–100). */
-  progress: number;
+  technical: string;
 }
 
-// Stage-to-progress mapping. Values reflect typical wall-clock duration weight
-// of each stage on this hardware: Demucs separation dominates (~50% of total),
-// CREPE melody is next, downloading + shifting are short tails.
-const STAGES: Record<JobStatusName | "idle", StageMeta> = {
-  idle: { label: "", progress: 0 },
-  queued: { label: "Queued...", progress: 5 },
-  downloading: { label: "Downloading full song...", progress: 18 },
-  separating: { label: "Separating vocals from instrumental...", progress: 65 },
-  melody: { label: "Extracting melody...", progress: 85 },
-  shifting: { label: "Shifting to your key...", progress: 97 },
-  done: { label: "Ready!", progress: 100 },
-  error: { label: "", progress: 0 },
-};
+const STEPS: Step[] = [
+  { key: "download", label: "Downloading the song", technical: "yt-dlp" },
+  {
+    key: "separate",
+    label: "Separating vocals from music",
+    technical: "demucs",
+  },
+  { key: "melody", label: "Reading the melody", technical: "crepe" },
+  { key: "shift", label: "Tuning to your key", technical: "rubberband" },
+  { key: "ready", label: "Ready", technical: "" },
+];
 
-const meta = computed(() => STAGES[props.status] ?? STAGES.idle);
-const isError = computed(() => props.status === "error");
-const isDone = computed(() => props.status === "done");
-const isActive = computed(
-  () => props.status !== "idle" && !isError.value && !isDone.value,
-);
+type StepState = "done" | "active" | "pending";
 
-// Time hint based on which heavy stage we're in.
-const timeHint = computed(() => {
+const activeStepKey = computed<Step["key"] | null>(() => {
   switch (props.status) {
     case "queued":
     case "downloading":
+      return "download";
     case "separating":
-      return "This typically takes 1–3 minutes";
+      return "separate";
     case "melody":
+      return "melody";
     case "shifting":
-      return "Almost done…";
+      return "shift";
+    case "done":
+      return "ready";
     default:
-      return "";
+      return null;
   }
 });
 
+const stepsWithState = computed<Array<Step & { state: StepState }>>(() => {
+  const orderedKeys = STEPS.map((s) => s.key);
+  const activeIdx =
+    activeStepKey.value === null
+      ? -1
+      : orderedKeys.indexOf(activeStepKey.value);
+  return STEPS.map((step, idx) => {
+    let state: StepState = "pending";
+    if (props.status === "done") {
+      state = "done";
+    } else if (activeIdx !== -1) {
+      if (idx < activeIdx) state = "done";
+      else if (idx === activeIdx) state = "active";
+    }
+    return { ...step, state };
+  });
+});
+
+const isError = computed(() => props.status === "error");
 const visible = computed(() => props.status !== "idle");
 </script>
 
 <template>
   <div
     v-if="visible"
-    class="rounded-xl p-4 border"
-    :class="{
-      'bg-red-900/30 border-red-800': isError,
-      'bg-[#1a1822] border-[#2ca02c]': isDone,
-      'bg-[#1a1822] border-[#2a2730]': isActive,
-    }"
+    class="max-w-md mx-auto rounded-2xl p-6 bg-[var(--color-surface)] border border-[var(--color-border)]"
   >
-    <!-- Progress bar (hidden in error state) -->
-    <div v-if="!isError" class="mb-3">
-      <div class="h-2 rounded-full bg-[#2a2730] overflow-hidden">
-        <div
-          class="h-full bg-[#2ca02c] transition-all duration-700 ease-out"
-          :style="{ width: `${meta.progress}%` }"
+    <div v-if="isError" class="text-[var(--color-danger)] text-sm">
+      Something went wrong: {{ message || "unknown error" }}
+    </div>
+    <ol v-else class="space-y-5">
+      <li
+        v-for="step in stepsWithState"
+        :key="step.key"
+        class="flex items-start gap-3"
+      >
+        <span
+          class="mt-1 w-3 h-3 rounded-full shrink-0 transition-colors"
+          :class="[
+            step.state === 'done'
+              ? 'bg-[var(--color-success)]'
+              : step.state === 'active'
+                ? 'bg-[var(--color-accent)] animate-pulse'
+                : 'bg-[var(--color-border)]',
+          ]"
         />
-      </div>
-    </div>
-
-    <!-- Label + dot + time hint -->
-    <div class="flex items-start gap-3">
-      <span
-        v-if="isActive"
-        class="inline-block w-3 h-3 rounded-full bg-[#2ca02c] animate-pulse shrink-0 mt-1.5"
-      />
-      <div class="flex-1 min-w-0">
-        <div
-          :class="{
-            'text-red-200': isError,
-            'text-[#2ca02c]': isDone,
-            'text-gray-300': isActive,
-          }"
-        >
-          <template v-if="isError">
-            Error: {{ message || "something went wrong" }}
-          </template>
-          <template v-else>
-            {{ meta.label }}
-          </template>
+        <div class="flex-1 min-w-0">
+          <div
+            class="text-[14px] transition-colors"
+            :class="[
+              step.state === 'pending'
+                ? 'text-[var(--color-text-faint)]'
+                : 'text-[var(--color-text)]',
+            ]"
+          >
+            {{ step.label }}
+          </div>
+          <div
+            v-if="step.technical"
+            class="serif-italic text-[11px] text-[var(--color-text-faint)] mt-0.5"
+          >
+            {{ step.technical }}
+          </div>
         </div>
-        <div v-if="timeHint" class="text-xs text-gray-500 mt-1">
-          {{ timeHint }}
-        </div>
-      </div>
-    </div>
+      </li>
+    </ol>
   </div>
 </template>
