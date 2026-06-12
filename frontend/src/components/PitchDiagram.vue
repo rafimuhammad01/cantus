@@ -269,11 +269,11 @@ interface UserSegment {
 // the 144ms median smoother's lag during a sung pitch transition.
 function segmentColor(userMidi: number, t: number): string {
   const target = interpolateTargetMidi(t);
-  if (target === null) return "#ff7f0e";
+  if (target === null) return "#e8a87c";
   const diff = Math.abs(userMidi - target);
-  if (diff <= 1.0) return "#2ca02c"; // green: "right note"
-  if (diff <= 2.0) return "#ffbb00"; // yellow: adjacent note
-  return "#d62728"; // red: clearly wrong
+  if (diff <= 1.0) return "#7a9e7e"; // sage: on pitch
+  if (diff <= 2.0) return "#e8a87c"; // amber: near
+  return "#c98a8a"; // muted danger: off
 }
 
 const userSegments = computed<UserSegment[]>(() => {
@@ -434,29 +434,31 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="rounded-xl p-4 bg-[#1a1822] border border-[#2a2730]">
+  <div
+    class="rounded-2xl p-4 bg-[var(--color-surface)] border border-[var(--color-border)]"
+  >
     <div class="flex items-center justify-between mb-3">
       <button
         v-if="isModelReady"
         @click="togglePlayAndSing"
-        class="px-5 py-2 rounded-full text-sm font-medium text-white transition-colors"
+        class="px-5 py-2 rounded-full text-sm font-medium transition-colors"
         :class="
           pitchDetection.isActive.value
-            ? 'bg-[#9ca3af] hover:bg-[#6b7280]'
-            : 'bg-[#2ca02c] hover:bg-[#249027]'
+            ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)]'
+            : 'bg-[var(--color-accent)] text-[#0a0a0b] hover:bg-[var(--color-accent-hover)]'
         "
       >
         {{ pitchDetection.isActive.value ? "⏸ Pause" : "▶ Play & Sing" }}
       </button>
       <span
         v-else
-        class="px-5 py-2 rounded-full text-sm font-medium text-[#9ca3af] bg-[#2a2730] cursor-default"
+        class="px-5 py-2 rounded-full text-sm font-medium text-[var(--color-text-muted)] bg-[var(--color-surface-2)] cursor-default"
       >
         Loading pitch detector...
       </span>
       <span
         v-if="pitchStore.hitRate !== null"
-        class="text-sm text-white tabular-nums"
+        class="text-sm text-[var(--color-text)] tnum"
       >
         Score: {{ Math.round(pitchStore.hitRate * 100) }}%
       </span>
@@ -464,18 +466,21 @@ onBeforeUnmount(() => {
 
     <div
       v-if="pitchDetection.error.value || audioError"
-      class="mb-3 flex items-center gap-3 text-sm text-red-400"
+      class="mb-3 flex items-center gap-3 text-sm text-[var(--color-danger)]"
     >
       <span>{{ pitchDetection.error.value ?? audioError }}</span>
       <button
         @click="startPlayAndSing"
-        class="px-3 py-1 rounded-full bg-[#2a2730] hover:bg-[#3a3748] text-white text-xs transition-colors"
+        class="px-3 py-1 rounded-full bg-[var(--color-surface-2)] hover:bg-[var(--color-border)] text-[var(--color-text)] text-xs transition-colors"
       >
         Retry
       </button>
     </div>
 
-    <div v-if="showHeadphonesTip" class="mb-3 text-xs text-gray-400">
+    <div
+      v-if="showHeadphonesTip"
+      class="mb-3 text-xs text-[var(--color-text-muted)]"
+    >
       Use headphones to keep the mic from picking up the backing track.
     </div>
 
@@ -491,8 +496,10 @@ onBeforeUnmount(() => {
         :key="tick"
         :x="4"
         :y="yScale(tick) + 4"
-        class="fill-[#9ca3af] font-mono"
+        fill="#a8a8a0"
         font-size="10"
+        font-family="Fraunces, serif"
+        font-style="italic"
       >
         {{ midiToNoteName(tick) }}
       </text>
@@ -505,7 +512,7 @@ onBeforeUnmount(() => {
         :x2="svgWidth"
         :y1="yScale(tick)"
         :y2="yScale(tick)"
-        stroke="#2a2730"
+        stroke="#24242a"
         stroke-dasharray="2,2"
       />
 
@@ -515,7 +522,7 @@ onBeforeUnmount(() => {
         :width="PITCH_BAR_WIDTH"
         :y="yScale(yMax)"
         :height="yScale(yMin) - yScale(yMax)"
-        fill="#2a2730"
+        fill="#24242a"
         rx="2"
       />
       <rect
@@ -529,7 +536,7 @@ onBeforeUnmount(() => {
         :height="
           Math.max(0, yScale(yMin) - yScale(pitchDetection.currentMidi.value))
         "
-        fill="#ff7f0e"
+        fill="#e8a87c"
         opacity="0.85"
         rx="2"
       />
@@ -540,7 +547,7 @@ onBeforeUnmount(() => {
         :key="`tp-${i}`"
         :points="seg"
         fill="none"
-        stroke="#1f77b4"
+        stroke="#e8a87c"
         stroke-width="3"
         stroke-linejoin="round"
       />
@@ -551,8 +558,8 @@ onBeforeUnmount(() => {
         :key="`tf-${i}`"
         :points="seg"
         fill="none"
-        stroke="#aaaaaa"
-        stroke-opacity="0.45"
+        stroke="#fafaf7"
+        stroke-opacity="0.35"
         stroke-width="2.5"
         stroke-linejoin="round"
       />
@@ -576,8 +583,9 @@ onBeforeUnmount(() => {
         :x2="xScale(now)"
         :y1="0"
         :y2="SVG_HEIGHT"
-        stroke="#dc2626"
-        stroke-width="2"
+        stroke="#fafaf7"
+        stroke-opacity="0.4"
+        stroke-width="1.5"
       />
 
       <!-- Edge arrow: shown when user pitch is outside the visible Y range -->
@@ -591,13 +599,13 @@ onBeforeUnmount(() => {
         <template v-if="pitchDetection.currentMidi.value > yMax">
           <polygon
             :points="`${svgWidth - 28},${TOP_PAD + 14} ${svgWidth - 20},${TOP_PAD + 2} ${svgWidth - 12},${TOP_PAD + 14}`"
-            fill="#ff7f0e"
+            fill="#e8a87c"
           />
           <text
             :x="svgWidth - 20"
             :y="TOP_PAD + 28"
             text-anchor="middle"
-            fill="#ff7f0e"
+            fill="#e8a87c"
             font-size="10"
             font-family="monospace"
           >
@@ -609,13 +617,13 @@ onBeforeUnmount(() => {
         <template v-else-if="pitchDetection.currentMidi.value < yMin">
           <polygon
             :points="`${svgWidth - 28},${SVG_HEIGHT - BOTTOM_PAD - 14} ${svgWidth - 20},${SVG_HEIGHT - BOTTOM_PAD - 2} ${svgWidth - 12},${SVG_HEIGHT - BOTTOM_PAD - 14}`"
-            fill="#ff7f0e"
+            fill="#e8a87c"
           />
           <text
             :x="svgWidth - 20"
             :y="SVG_HEIGHT - BOTTOM_PAD - 18"
             text-anchor="middle"
-            fill="#ff7f0e"
+            fill="#e8a87c"
             font-size="10"
             font-family="monospace"
           >
