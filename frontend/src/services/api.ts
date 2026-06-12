@@ -143,3 +143,41 @@ export async function getPreviewKey(
   }
   return (await resp.json()) as PreviewKeyResponse;
 }
+
+/**
+ * POST /api/preview-stems — triggers Demucs + CREPE on the 30s clip.
+ * Blocks ~14s until all stems and melody.json are cached. Idempotent.
+ */
+export async function triggerPreviewStems(
+  videoId: string,
+  sig: string,
+): Promise<void> {
+  const resp = await fetch("/api/preview-stems", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ video_id: videoId, sig }),
+  });
+  await checkOk(resp);
+  // Body is { "ready": true } — we only need the 200 OK.
+}
+
+/**
+ * GET /api/preview-melody/:videoId/:semitones?sig= — returns math-transposed
+ * MelodyResponse for the preview clip. 404 if preview-stems not yet generated.
+ */
+export async function getPreviewMelody(
+  videoId: string,
+  sig: string,
+  semitones: number,
+): Promise<MelodyResponse> {
+  const resp = await fetch(
+    `/api/preview-melody/${videoId}/${semitones}?sig=${sig}`,
+  );
+  await checkOk(resp);
+  return resp.json() as Promise<MelodyResponse>;
+}
+
+/** Returns the GET URL for the clean instrumental stem (no_vocals.mp3). */
+export function previewAudioURL(videoId: string, sig: string): string {
+  return `/api/preview-audio/${videoId}?sig=${sig}`;
+}

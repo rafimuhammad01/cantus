@@ -7,10 +7,14 @@ import {
   getMelody,
   getPreviewKey,
   audioURL,
+  triggerPreviewStems,
+  getPreviewMelody,
+  previewAudioURL,
   type SearchResult,
   type MelodyResponse,
   type JobStatusName,
 } from "@/services/api";
+import { hzToMidi } from "@/utils/pitch";
 
 type PlayerMode = "idle" | "preview" | "preview-shift" | "full";
 
@@ -23,12 +27,49 @@ export const usePlayerStore = defineStore("player", () => {
   // Transpose state
   const semitones = ref(0);
 
+  // Vocal octave shift: -12, 0, or +12 semitones applied only to the displayed
+  // target line — instrumental audio is unchanged.
+  const vocalOctaveShift = ref<-12 | 0 | 12>(0);
+
+  // Range of voiced MIDI notes in the active melody, with vocalOctaveShift applied.
+  // Prefers previewMelody when in preview/preview-shift mode; falls back to full melody.
+  const vocalRange = computed<{ minMidi: number; maxMidi: number } | null>(
+    () => {
+      const activeMelody =
+        mode.value === "full"
+          ? melody.value
+          : (previewMelody.value ?? melody.value);
+      if (!activeMelody) return null;
+      const voiced = activeMelody.frames
+        .filter(([, hz]) => hz > 0)
+        .map(([, hz]) => hzToMidi(hz));
+      if (voiced.length === 0) return null;
+      const shift = vocalOctaveShift.value;
+      return {
+        minMidi: Math.round(Math.min(...voiced) + shift),
+        maxMidi: Math.round(Math.max(...voiced) + shift),
+      };
+    },
+  );
+
   // Audio source
   const audioSrc = ref<string>("");
   const mode = ref<PlayerMode>("idle");
 
   // Preview key — loaded from /api/preview-key after song selection (no generate needed)
   const previewKey = ref<string>("");
+
+  // Preview-stems state — populated by loadPreviewStems() after Demucs + CREPE
+  const previewMelody = ref<MelodyResponse | null>(null);
+  const previewStemsReady = ref(false);
+  const previewStemsLoading = ref(false); // shown by PreviewView as a spinner
+  const previewStemsError = ref<string>("");
+
+  // Computed keys from the math-transposed preview melody (separate from full-song melody)
+  const previewOriginalKey = computed(() => previewMelody.value?.key ?? null);
+  const previewTransposedKey = computed(
+    () => previewMelody.value?.transposed_key ?? null,
+  );
 
   // Melody + key (populated after /api/melody fetches; key visible only after generate done)
   const melody = ref<MelodyResponse | null>(null);
@@ -51,13 +92,23 @@ export const usePlayerStore = defineStore("player", () => {
     if (isBlob) currentBlobUrl = url;
   }
 
+  function setVocalOctaveShift(shift: -12 | 0 | 12): void {
+    vocalOctaveShift.value = shift;
+  }
+
   /** Called from SongCard.click — initializes the player for a given song. */
   function selectSong(result: SearchResult) {
     videoId.value = result.video_id;
     sig.value = result.sig;
     song.value = result;
     semitones.value = 0;
+    vocalOctaveShift.value = 0;
     previewKey.value = "";
+    // Reset preview-stems machinery so each new song starts fresh
+    previewMelody.value = null;
+    previewStemsReady.value = false;
+    previewStemsLoading.value = false;
+    previewStemsError.value = "";
     melody.value = null;
     jobId.value = null;
     jobStatus.value = "idle";
@@ -84,23 +135,81 @@ export const usePlayerStore = defineStore("player", () => {
   /** Fire /api/preview-shift and swap audioSrc to the returned blob. */
   async function setSemitones(n: number) {
     if (n === semitones.value) return;
-    semitones.value = n;
+
+    // Full-song mode (after generate): unchanged.
     if (mode.value === "full" && melody.value !== null) {
-      // After generate complete: swap to the cached shifted full audio
+      semitones.value = n;
       setAudioSrc(audioURL(videoId.value, sig.value, n));
-      // Refresh melody to get transposed_key for the new offset
       melody.value = await getMelody(videoId.value, sig.value, n);
       return;
     }
-    // Otherwise we're in preview mode — fetch shifted preview blob
+
+    // Preview mode with stems ready: fetch the transposed melody BEFORE flipping
+    // semitones, since `:key="player.semitones"` on PitchDiagram triggers a
+    // remount synchronously when the ref changes. If we flipped first the
+    // diagram would remount with the previous (stale) melody and the const
+    // targetSeries at component setup would lock in the wrong target line.
+    if (previewStemsReady.value) {
+      try {
+        previewMelody.value = await getPreviewMelody(
+          videoId.value,
+          sig.value,
+          n,
+        );
+      } catch {
+        // Non-fatal — pitch diagram will just stale until next successful fetch
+      }
+    }
+
+    semitones.value = n;
+
+    // n=0 → return to the unshifted source (stem when ready, raw preview otherwise)
     if (n === 0) {
-      setAudioSrc(previewURL(videoId.value, sig.value));
+      if (previewStemsReady.value) {
+        // Stems ready: use the clean instrumental stem (no chipmunk artifacts)
+        setAudioSrc(previewAudioURL(videoId.value, sig.value));
+      } else {
+        setAudioSrc(previewURL(videoId.value, sig.value));
+      }
       mode.value = "preview";
       return;
     }
+
+    // n≠0: fetch shifted preview blob (backend shifts clean stem when available)
     const blob = await previewShift(videoId.value, sig.value, n);
     setAudioSrc(URL.createObjectURL(blob), true);
     mode.value = "preview-shift";
+  }
+
+  /**
+   * Trigger Demucs + CREPE on the 30s preview clip, then fetch the preview melody.
+   * Blocks ~14s warm-server / ~50s cold-server. Idempotent on the backend, so safe to call multiple times.
+   * Once complete, swaps audioSrc to the clean instrumental stem URL.
+   */
+  async function loadPreviewStems(): Promise<void> {
+    if (!videoId.value || !sig.value) return;
+    if (previewStemsReady.value) return; // idempotent — stems already loaded
+    if (previewStemsLoading.value) return; // in-flight; let it complete
+    previewStemsLoading.value = true;
+    previewStemsError.value = "";
+    try {
+      await triggerPreviewStems(videoId.value, sig.value);
+      // Fetch melody at the current semitones (usually 0 on first load)
+      previewMelody.value = await getPreviewMelody(
+        videoId.value,
+        sig.value,
+        semitones.value,
+      );
+      // Swap audio source from the legacy fast preview to the clean stem
+      setAudioSrc(previewAudioURL(videoId.value, sig.value));
+      mode.value = "preview";
+      previewStemsReady.value = true;
+    } catch (e) {
+      previewStemsError.value =
+        (e as Error).message ?? "Failed to load preview stems";
+    } finally {
+      previewStemsLoading.value = false;
+    }
   }
 
   /** Kick off /api/generate. Caller drives the SSE via useSSE. */
@@ -133,15 +242,25 @@ export const usePlayerStore = defineStore("player", () => {
     audioSrc,
     mode,
     previewKey,
+    previewMelody,
+    previewStemsReady,
+    previewStemsLoading,
+    previewStemsError,
+    previewOriginalKey,
+    previewTransposedKey,
     melody,
     originalKey,
     transposedKey,
     jobId,
     jobStatus,
     jobMessage,
+    vocalOctaveShift,
+    vocalRange,
     selectSong,
     setSemitones,
+    setVocalOctaveShift,
     loadPreviewKey,
+    loadPreviewStems,
     startGenerate,
     applyStatus,
     onGenerateDone,

@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
-import { usePitchDetection } from "@/composables/usePitchDetection";
+import {
+  usePitchDetectionSPICE,
+  preloadSPICE,
+  isModelReady,
+} from "@/composables/usePitchDetectionSPICE";
 import { usePitchStore } from "@/stores/pitch";
 import { hzToMidi, midiToNoteName } from "@/utils/pitch";
 import type { MelodyResponse } from "@/services/api";
@@ -8,6 +12,7 @@ import type { MelodyResponse } from "@/services/api";
 const props = defineProps<{
   audioEl: HTMLAudioElement;
   melody: MelodyResponse;
+  vocalOctaveShift?: number; // default 0; offsets target MIDI at setup time
 }>();
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -78,11 +83,12 @@ function ffillAndSmooth(series: TargetFrame[]): TargetFrame[] {
   return smoothed;
 }
 
+const shift = props.vocalOctaveShift ?? 0;
 const targetSeries: TargetFrame[] = ffillAndSmooth(
   props.melody.frames
     .map(([t_ms, hz]) => ({
       t: t_ms / 1000,
-      midi: hz > 0 ? hzToMidi(hz) : null,
+      midi: hz > 0 ? hzToMidi(hz) + shift : null,
     }))
     .sort((a, b) => a.t - b.t),
 );
@@ -93,15 +99,54 @@ const voicedTargets = targetSeries.filter(
 const voicedTimes: number[] = voicedTargets.map((f) => f.t);
 const voicedMidis: number[] = voicedTargets.map((f) => f.midi);
 
-const yMin: number = (() => {
-  if (voicedMidis.length === 0) return 48;
-  return Math.floor(Math.min(...voicedMidis)) - 1;
-})();
+const yMin = ref<number>(
+  voicedMidis.length === 0 ? 48 : Math.floor(Math.min(...voicedMidis)) - 1,
+);
+const yMax = ref<number>(
+  voicedMidis.length === 0 ? 72 : Math.ceil(Math.max(...voicedMidis)) + 1,
+);
 
-const yMax: number = (() => {
-  if (voicedMidis.length === 0) return 72;
-  return Math.ceil(Math.max(...voicedMidis)) + 1;
-})();
+const MIN_Y_SPAN = 18;
+const LERP_RATE = 0.03;
+const SNAP_THRESHOLD = 0.1;
+
+function computeDesiredBounds(): { lo: number; hi: number } {
+  const t0 = now.value - WINDOW_SECONDS / 2;
+  const t1 = now.value + WINDOW_SECONDS / 2;
+  let lo = Infinity,
+    hi = -Infinity;
+
+  for (const f of targetSeries) {
+    if (f.midi === null) continue;
+    if (f.t < t0 || f.t > t1) continue;
+    if (f.midi < lo) lo = f.midi;
+    if (f.midi > hi) hi = f.midi;
+  }
+
+  const times = pitchStore.userTimes;
+  const midis = pitchStore.userMidis;
+  for (let i = times.length - 1; i >= 0; i--) {
+    if (times[i] < t0) break;
+    const m = midis[i];
+    if (m === null || !isFinite(m)) continue;
+    if (m < lo) lo = m;
+    if (m > hi) hi = m;
+  }
+
+  if (!isFinite(lo) || !isFinite(hi)) {
+    return { lo: yMin.value, hi: yMax.value };
+  }
+
+  lo = Math.floor(lo) - 1;
+  hi = Math.ceil(hi) + 1;
+  const span = hi - lo;
+  if (span < MIN_Y_SPAN) {
+    const grow = (MIN_Y_SPAN - span) / 2;
+    lo -= grow;
+    hi += grow;
+  }
+  return { lo, hi };
+}
 
 // ─── Interpolation helper (mirrors np.interp with NaN edges) ─────────────────
 
@@ -126,7 +171,7 @@ function interpolateTargetMidi(t: number): number | null {
 
 // ─── Reactive state ───────────────────────────────────────────────────────────
 
-const pitchDetection = usePitchDetection();
+const pitchDetection = usePitchDetectionSPICE();
 const pitchStore = usePitchStore();
 const svgEl = ref<SVGSVGElement | null>(null);
 const svgWidth = ref(600);
@@ -146,14 +191,17 @@ function xScale(t: number): number {
 
 function yScale(midi: number): number {
   const drawH = SVG_HEIGHT - TOP_PAD - BOTTOM_PAD;
-  return TOP_PAD + drawH * (1 - (midi - yMin) / (yMax - yMin));
+  return (
+    TOP_PAD + drawH * (1 - (midi - yMin.value) / (yMax.value - yMin.value))
+  );
 }
 
 // ─── Y-axis ticks ─────────────────────────────────────────────────────────────
 
 const yTicks = computed<number[]>(() => {
   const ticks: number[] = [];
-  for (let m = yMin; m <= yMax; m++) ticks.push(m);
+  for (let m = Math.ceil(yMin.value); m <= Math.floor(yMax.value); m++)
+    ticks.push(m);
   return ticks;
 });
 
@@ -215,16 +263,17 @@ interface UserSegment {
   color: string;
 }
 
-// Loose accuracy bands — Cantus is a reference tool, not a tutor. Green covers
-// "you're in the right note", yellow covers "a semitone or two off, still close",
-// red kicks in only when the pitch is clearly elsewhere.
+// Color bands based on pitch perception research (Vurma & Ross 2006 J. Voice
+// "in tune" perception ±20–30 cents; karaoke convention ±50 cents acceptable;
+// >100 cents = audibly wrong note). The 1-semitone green band accounts for
+// the 144ms median smoother's lag during a sung pitch transition.
 function segmentColor(userMidi: number, t: number): string {
   const target = interpolateTargetMidi(t);
   if (target === null) return "#ff7f0e";
   const diff = Math.abs(userMidi - target);
-  if (diff <= 1.5) return "#2ca02c";
-  if (diff <= 3.0) return "#ffbb00";
-  return "#d62728";
+  if (diff <= 1.0) return "#2ca02c"; // green: "right note"
+  if (diff <= 2.0) return "#ffbb00"; // yellow: adjacent note
+  return "#d62728"; // red: clearly wrong
 }
 
 const userSegments = computed<UserSegment[]>(() => {
@@ -272,6 +321,20 @@ function tick(): void {
     );
   }
 
+  const desired = computeDesiredBounds();
+
+  const newYMin = yMin.value + (desired.lo - yMin.value) * LERP_RATE;
+  yMin.value =
+    Math.abs(newYMin - Math.round(newYMin)) < SNAP_THRESHOLD
+      ? Math.round(newYMin)
+      : newYMin;
+
+  const newYMax = yMax.value + (desired.hi - yMax.value) * LERP_RATE;
+  yMax.value =
+    Math.abs(newYMax - Math.round(newYMax)) < SNAP_THRESHOLD
+      ? Math.round(newYMax)
+      : newYMax;
+
   rafId = requestAnimationFrame(tick);
 }
 
@@ -292,9 +355,7 @@ async function startPlayAndSing(): Promise<void> {
   // losing it.
   const playPromise = props.audioEl.play();
 
-  await pitchDetection.start(() =>
-    interpolateTargetMidi(props.audioEl.currentTime),
-  );
+  await pitchDetection.start();
   if (pitchDetection.error.value) {
     props.audioEl.pause();
     return;
@@ -342,6 +403,12 @@ function onEnded(): void {
 let resizeObserver: ResizeObserver | null = null;
 
 onMounted(() => {
+  // Kick off SPICE download in the background so it's ready by the time
+  // the user is ready to sing. Audio playback waits for this.
+  preloadSPICE().catch(() => {
+    // Errors surface through pitchDetection.error when user clicks Play & Sing.
+  });
+
   props.audioEl.addEventListener("seeked", onSeeked);
   props.audioEl.addEventListener("ended", onEnded);
   rafId = requestAnimationFrame(tick);
@@ -370,6 +437,7 @@ onBeforeUnmount(() => {
   <div class="rounded-xl p-4 bg-[#1a1822] border border-[#2a2730]">
     <div class="flex items-center justify-between mb-3">
       <button
+        v-if="isModelReady"
         @click="togglePlayAndSing"
         class="px-5 py-2 rounded-full text-sm font-medium text-white transition-colors"
         :class="
@@ -380,6 +448,12 @@ onBeforeUnmount(() => {
       >
         {{ pitchDetection.isActive.value ? "⏸ Pause" : "▶ Play & Sing" }}
       </button>
+      <span
+        v-else
+        class="px-5 py-2 rounded-full text-sm font-medium text-[#9ca3af] bg-[#2a2730] cursor-default"
+      >
+        Loading pitch detector...
+      </span>
       <span
         v-if="pitchStore.hitRate !== null"
         class="text-sm text-white tabular-nums"
@@ -505,6 +579,50 @@ onBeforeUnmount(() => {
         stroke="#dc2626"
         stroke-width="2"
       />
+
+      <!-- Edge arrow: shown when user pitch is outside the visible Y range -->
+      <template
+        v-if="
+          pitchDetection.currentMidi.value !== null &&
+          isFinite(pitchDetection.currentMidi.value)
+        "
+      >
+        <!-- Above yMax: chevron at top-right pointing up -->
+        <template v-if="pitchDetection.currentMidi.value > yMax">
+          <polygon
+            :points="`${svgWidth - 28},${TOP_PAD + 14} ${svgWidth - 20},${TOP_PAD + 2} ${svgWidth - 12},${TOP_PAD + 14}`"
+            fill="#ff7f0e"
+          />
+          <text
+            :x="svgWidth - 20"
+            :y="TOP_PAD + 28"
+            text-anchor="middle"
+            fill="#ff7f0e"
+            font-size="10"
+            font-family="monospace"
+          >
+            +{{ Math.round(pitchDetection.currentMidi.value - yMax) }}st
+          </text>
+        </template>
+
+        <!-- Below yMin: chevron at bottom-right pointing down -->
+        <template v-else-if="pitchDetection.currentMidi.value < yMin">
+          <polygon
+            :points="`${svgWidth - 28},${SVG_HEIGHT - BOTTOM_PAD - 14} ${svgWidth - 20},${SVG_HEIGHT - BOTTOM_PAD - 2} ${svgWidth - 12},${SVG_HEIGHT - BOTTOM_PAD - 14}`"
+            fill="#ff7f0e"
+          />
+          <text
+            :x="svgWidth - 20"
+            :y="SVG_HEIGHT - BOTTOM_PAD - 18"
+            text-anchor="middle"
+            fill="#ff7f0e"
+            font-size="10"
+            font-family="monospace"
+          >
+            -{{ Math.round(yMin - pitchDetection.currentMidi.value) }}st
+          </text>
+        </template>
+      </template>
     </svg>
   </div>
 </template>

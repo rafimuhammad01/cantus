@@ -10,8 +10,8 @@
     "test": "vitest"
   },
   "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
     "pinia": "^3.0.4",
-    "pitchy": "^4.1.0",
     "vue": "^3.5.34",
     "vue-router": "^4.6.4"
   },

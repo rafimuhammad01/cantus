@@ -5,7 +5,9 @@ import { usePlayerStore } from "@/stores/player";
 import { useSSE } from "@/composables/useSSE";
 import { statusURL, audioURL, getMelody } from "@/services/api";
 import { shortKey, transposeKey } from "@/utils/key";
+import { midiToNoteName } from "@/utils/pitch";
 import KeySelector from "@/components/KeySelector.vue";
+import VocalOctaveSelector from "@/components/VocalOctaveSelector.vue";
 import AudioPlayer from "@/components/AudioPlayer.vue";
 import ProcessingStatus from "@/components/ProcessingStatus.vue";
 import PitchDiagram from "@/components/PitchDiagram.vue";
@@ -16,7 +18,7 @@ const player = usePlayerStore();
 const sse = useSSE();
 const audioPlayerRef = ref<InstanceType<typeof AudioPlayer> | null>(null);
 
-const NAV_DEBOUNCE_MS = 600;
+const NAV_DEBOUNCE_MS = 250;
 
 const routeVideoId = computed(() => {
   const v = route.params.videoId;
@@ -91,6 +93,7 @@ function startSSE() {
 // debounce the URL navigation so rapid clicks collapse into one nav.
 function onSemitonesChange(n: number) {
   pendingSemitones.value = n;
+  audioPlayerRef.value?.audio?.pause();
   if (navTimer !== null) clearTimeout(navTimer);
   navTimer = setTimeout(() => {
     navTimer = null;
@@ -130,7 +133,11 @@ watch(routeSemitones, async (next) => {
 });
 
 onMounted(() => {
-  if (noContext.value) return;
+  if (noContext.value) {
+    // No song selected (refresh, deep link, or expired session) — bounce to search.
+    router.replace("/");
+    return;
+  }
   // If we already have a jobId from PreviewView, just open the SSE.
   // Otherwise kick a generate.
   player.semitones = routeSemitones.value;
@@ -179,20 +186,7 @@ onUnmounted(() => {
       ← Back to preview
     </button>
 
-    <div
-      v-if="noContext"
-      class="rounded-xl p-8 bg-[#1a1822] border border-[#2a2730] text-center"
-    >
-      <p class="text-white mb-4">Pick a song from search first.</p>
-      <button
-        @click="router.push('/')"
-        class="px-6 py-3 rounded-full bg-[#2ca02c] hover:bg-[#249027] text-white transition-colors"
-      >
-        Go to search
-      </button>
-    </div>
-
-    <template v-else>
+    <template v-if="!noContext">
       <!-- Song header -->
       <div class="mb-6">
         <h1 class="text-3xl font-bold text-white mb-1">
@@ -218,8 +212,23 @@ onUnmounted(() => {
       </div>
 
       <!-- Key display -->
-      <div v-if="showKeyLine" class="mb-6 text-gray-300">{{ keyDisplay }}</div>
-      <div v-else class="mb-6 text-gray-600 text-sm">&nbsp;</div>
+      <div v-if="showKeyLine" class="mb-3 text-gray-300">{{ keyDisplay }}</div>
+      <div v-else class="mb-3 text-gray-600 text-sm">&nbsp;</div>
+
+      <!-- Vocal octave selector — shifts only the displayed target line, not the audio -->
+      <div class="flex items-center gap-4 mb-2">
+        <VocalOctaveSelector
+          :current="player.vocalOctaveShift"
+          :disabled="player.jobStatus !== 'done'"
+          @change="player.setVocalOctaveShift"
+        />
+      </div>
+      <div class="mb-6 text-gray-300 text-sm min-h-[1.25rem]">
+        <template v-if="player.melody && player.vocalRange !== null">
+          Vocal: {{ midiToNoteName(player.vocalRange.minMidi) }} –
+          {{ midiToNoteName(player.vocalRange.maxMidi) }}
+        </template>
+      </div>
 
       <!-- SSE progress while in-flight; audio player when done -->
       <div v-if="!isDone" class="mb-6">
@@ -240,13 +249,16 @@ onUnmounted(() => {
         />
       </div>
 
-      <!-- Pitch diagram: shown once generate is done, melody is loaded, and audio element exists -->
+      <!-- Pitch diagram: shown once generate is done, melody is loaded, and audio element exists.
+           :key on routeSemitones forces a clean remount on transpose so user-history + targetSeries reset. -->
       <PitchDiagram
         v-if="
           player.melody && player.jobStatus === 'done' && audioPlayerRef?.audio
         "
+        :key="`${routeSemitones}-${player.vocalOctaveShift}`"
         :audio-el="audioPlayerRef.audio!"
         :melody="player.melody"
+        :vocal-octave-shift="player.vocalOctaveShift"
       />
     </template>
   </div>

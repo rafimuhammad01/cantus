@@ -16,6 +16,10 @@ const router = createRouter({
       path: "/play/:videoId/:semitones",
       component: () => import("@/views/PlayView.vue"),
     },
+    {
+      path: "/:pathMatch(.*)*",
+      redirect: "/",
+    },
   ],
 });
 

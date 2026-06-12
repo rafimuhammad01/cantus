@@ -2,15 +2,23 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { usePlayerStore } from "@/stores/player";
-import { transposeKey, shortKey } from "@/utils/key";
+import { shortKey, transposeKey } from "@/utils/key";
+import { midiToNoteName } from "@/utils/pitch";
 import KeySelector from "@/components/KeySelector.vue";
+import VocalOctaveSelector from "@/components/VocalOctaveSelector.vue";
 import AudioPlayer from "@/components/AudioPlayer.vue";
+import ProcessingStatus from "@/components/ProcessingStatus.vue";
+import PitchDiagram from "@/components/PitchDiagram.vue";
 
 const route = useRoute();
 const router = useRouter();
 const player = usePlayerStore();
+const audioPlayerRef = ref<InstanceType<typeof AudioPlayer> | null>(null);
 
-const SHIFT_DEBOUNCE_MS = 600;
+// Short debounce — long enough to collapse mash-clicks, short enough that the
+// transition feels snappy. We pause audio + show "Shifting…" immediately on
+// click, so 250ms doesn't read as lag.
+const SHIFT_DEBOUNCE_MS = 250;
 
 const routeVideoId = computed(() => {
   const v = route.params.videoId;
@@ -29,11 +37,20 @@ let shiftTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Key display reads pendingSemitones so the user sees "A → D" immediately
 // even while the audio is still catching up.
-const originalShort = computed(() => shortKey(player.previewKey));
-const transposedShort = computed(() =>
-  shortKey(transposeKey(player.previewKey, pendingSemitones.value)),
-);
-const showKeyLine = computed(() => player.previewKey !== "");
+// Once previewMelody arrives we read its keys (backend already computed transposed_key);
+// before that we fall back to transposeKey math on previewOriginalKey.
+const originalShort = computed(() => shortKey(player.previewOriginalKey ?? ""));
+const transposedShort = computed(() => {
+  const base = player.previewOriginalKey ?? "";
+  if (!base) return "";
+  // When pending matches store, prefer the server-computed transposed_key
+  if (pendingSemitones.value === player.semitones) {
+    return shortKey(player.previewTransposedKey ?? "");
+  }
+  // During debounce, compute locally so the key display updates instantly
+  return shortKey(transposeKey(base, pendingSemitones.value));
+});
+const showKeyLine = computed(() => player.previewOriginalKey !== null);
 const keyDisplay = computed(() => {
   if (!originalShort.value) return "";
   if (pendingSemitones.value === 0) return `Key: ${originalShort.value}`;
@@ -48,13 +65,19 @@ function fmtDuration(sec: number): string {
 
 function onSemitonesChange(n: number) {
   pendingSemitones.value = n;
-  if (shiftTimer !== null) {
-    clearTimeout(shiftTimer);
+  if (n === player.semitones) {
+    shiftPending.value = false;
+    if (shiftTimer !== null) {
+      clearTimeout(shiftTimer);
+      shiftTimer = null;
+    }
+    return;
   }
+  audioPlayerRef.value?.audio?.pause();
+  shiftPending.value = true;
+  if (shiftTimer !== null) clearTimeout(shiftTimer);
   shiftTimer = setTimeout(async () => {
     shiftTimer = null;
-    if (shiftPending.value || n === player.semitones) return;
-    shiftPending.value = true;
     try {
       await player.setSemitones(n);
     } finally {
@@ -82,10 +105,17 @@ async function onGenerateClick() {
 }
 
 onMounted(() => {
-  if (!noContext.value) {
-    pendingSemitones.value = player.semitones;
-    player.loadPreviewKey();
+  if (noContext.value) {
+    // No song selected (refresh, deep link, or expired session) — bounce to search.
+    router.replace("/");
+    return;
   }
+  pendingSemitones.value = player.semitones;
+  // Fire loadPreviewStems without awaiting — UI reacts to reactive flags.
+  // loadPreviewKey() is intentionally removed: previewMelody provides the key
+  // once stems are ready, and keeping an extra CREPE-less key call would
+  // require two separate sources of truth for the same value.
+  void player.loadPreviewStems();
 });
 
 onUnmounted(() => {
@@ -102,22 +132,7 @@ onUnmounted(() => {
       ← Back to search
     </button>
 
-    <div
-      v-if="noContext"
-      class="rounded-xl p-8 bg-[#1a1822] border border-[#2a2730] text-center"
-    >
-      <p class="text-white mb-4">
-        Pick a song from search to load the preview.
-      </p>
-      <button
-        @click="router.push('/')"
-        class="px-6 py-3 rounded-full bg-[#2ca02c] hover:bg-[#249027] text-white transition-colors"
-      >
-        Go to search
-      </button>
-    </div>
-
-    <template v-else>
+    <template v-if="!noContext">
       <!-- Song header -->
       <div class="mb-6">
         <h1 class="text-3xl font-bold text-white mb-1">
@@ -134,22 +149,112 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- Transpose pill -->
+      <!-- Transpose pill — disabled until stems are ready to prevent chipmunk shifts -->
       <div class="flex items-center gap-4 mb-3">
         <KeySelector
           :semitones="pendingSemitones"
+          :disabled="!player.previewStemsReady"
           @change="onSemitonesChange"
         />
       </div>
 
       <!-- Key display -->
-      <div v-if="showKeyLine" class="mb-6 text-gray-300">{{ keyDisplay }}</div>
-      <div v-else class="mb-6 text-gray-600 text-sm">Loading key...</div>
-
-      <!-- Audio player (30s preview, possibly shifted) -->
-      <div class="mb-6 rounded-xl p-4 bg-[#1a1822] border border-[#2a2730]">
-        <AudioPlayer :src="player.audioSrc" />
+      <div v-if="showKeyLine" class="mb-3 text-gray-300">{{ keyDisplay }}</div>
+      <div v-else class="mb-3 text-gray-600 text-sm">
+        {{ player.previewStemsLoading ? "Preparing track…" : "&nbsp;" }}
       </div>
+
+      <!-- Vocal octave selector — shifts only the displayed target line, not the audio -->
+      <div class="flex items-center gap-4 mb-2">
+        <VocalOctaveSelector
+          :current="player.vocalOctaveShift"
+          :disabled="!player.previewStemsReady"
+          @change="player.setVocalOctaveShift"
+        />
+      </div>
+      <div class="mb-6 text-gray-300 text-sm min-h-[1.25rem]">
+        <template v-if="player.vocalRange !== null">
+          Vocal: {{ midiToNoteName(player.vocalRange.minMidi) }} –
+          {{ midiToNoteName(player.vocalRange.maxMidi) }}
+        </template>
+      </div>
+
+      <!-- Preview-stems progress / error / audio player -->
+      <div class="mb-6">
+        <!-- Loading: show progress while Demucs + CREPE run on the clip -->
+        <div
+          v-if="player.previewStemsLoading"
+          class="rounded-xl p-4 bg-[#1a1822] border border-[#2a2730]"
+        >
+          <ProcessingStatus
+            status="separating"
+            message="Preparing the instrumental track — about 14 seconds…"
+          />
+        </div>
+
+        <!-- Error: show message and retry button -->
+        <div
+          v-else-if="player.previewStemsError"
+          class="rounded-xl p-4 bg-red-900/30 border border-red-800 text-red-200"
+        >
+          <p class="mb-3">{{ player.previewStemsError }}</p>
+          <button
+            @click="() => void player.loadPreviewStems()"
+            class="px-4 py-2 rounded-full bg-[#2ca02c] hover:bg-[#249027] text-white text-sm transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+
+        <!-- Audio player: always rendered once loading is done so audioPlayerRef is available -->
+        <div
+          v-else
+          class="relative rounded-xl p-4 bg-[#1a1822] border border-[#2a2730]"
+        >
+          <div
+            v-if="shiftPending"
+            class="absolute inset-0 rounded-xl bg-[#1a1822]/85 backdrop-blur-sm flex flex-col items-center justify-center gap-2 z-10"
+          >
+            <svg class="animate-spin h-6 w-6" viewBox="0 0 24 24" fill="none">
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="#2a2730"
+                stroke-width="3"
+              />
+              <path
+                d="M12 2a10 10 0 0 1 10 10"
+                stroke="#2ca02c"
+                stroke-width="3"
+                stroke-linecap="round"
+              />
+            </svg>
+            <span class="text-sm text-gray-300">Shifting key…</span>
+          </div>
+          <AudioPlayer
+            ref="audioPlayerRef"
+            :src="player.audioSrc"
+            :hide-play-button="true"
+          />
+        </div>
+      </div>
+
+      <!-- Pitch diagram: shown once stems are ready, melody is loaded, and audio element exists.
+           :key on semitones forces a clean remount on transpose — the prototype's targetSeries +
+           pitch store user-history are precomputed at setup, so without a remount the diagram
+           would still show the previous-key target line and the user's stale singing trail. -->
+      <PitchDiagram
+        v-if="
+          player.previewStemsReady &&
+          player.previewMelody &&
+          audioPlayerRef?.audio
+        "
+        :key="`${player.semitones}-${player.vocalOctaveShift}`"
+        :audio-el="audioPlayerRef.audio!"
+        :melody="player.previewMelody"
+        :vocal-octave-shift="player.vocalOctaveShift"
+      />
 
       <div class="text-xs text-gray-500 mb-4">
         This is a 30-second preview. Generate the full song to sing along.

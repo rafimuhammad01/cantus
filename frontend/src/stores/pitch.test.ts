@@ -7,16 +7,21 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// A. recordSample — hit/total table
+// A. recordSample — hit/total table (absolute distance scoring, matches diagram)
+// Hit = |userMidi - targetMidi| ≤ 2.0 (green ≤1.0 + yellow ≤2.0 bands).
+// Octave-equivalent notes are NOT credited — absolute distance only.
 // ---------------------------------------------------------------------------
 describe("A. recordSample — hit/total", () => {
   it.each<[string, number | null, number | null, number, number]>([
     ["exact match", 60.0, 60.0, 1, 1],
-    ["within green band", 60.0, 61.0, 1, 1],
-    ["within yellow band", 60.0, 62.5, 1, 1],
-    ["boundary ≤3.0", 60.0, 63.0, 1, 1],
-    ["just outside 3.01", 60.0, 63.01, 0, 1],
-    ["below boundary -3.0", 57.0, 60.0, 1, 1],
+    ["within green band (|diff|=1.0)", 60.0, 61.0, 1, 1],
+    ["within yellow band (|diff|=1.5)", 60.0, 61.5, 1, 1],
+    ["boundary |diff|=2.0 → hit", 60.0, 62.0, 1, 1],
+    ["just outside |diff|=2.01 → miss", 60.0, 62.01, 0, 1],
+    ["below boundary |diff|=1.5 (user=58.5, target=60)", 58.5, 60.0, 1, 1],
+    ["octave: user=72, target=60 → miss (|diff|=12 > 2.0)", 72.0, 60.0, 0, 1],
+    ["octave: user=48, target=60 → miss (|diff|=12 > 2.0)", 48.0, 60.0, 0, 1],
+    ["miss: user=60, target=64 (|diff|=4 > 2.0)", 60.0, 64.0, 0, 1],
     ["user null", null, 60.0, 0, 0],
     ["target null", 60.0, null, 0, 0],
     ["user NaN", NaN, 60.0, 0, 0],
@@ -129,7 +134,7 @@ describe("F. hitRate gating", () => {
       store.recordSample(i * 0.01, 60.0, 60.0); // hit
     }
     for (let i = hits; i < total; i++) {
-      store.recordSample(i * 0.01, 60.0, 70.0); // miss (diff=10 > 3.0)
+      store.recordSample(i * 0.01, 60.0, 64.0); // miss (|diff|=4 > 2.0)
     }
     if (expected === null) {
       expect(store.hitRate).toBeNull();

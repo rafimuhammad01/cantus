@@ -44,10 +44,10 @@ export const usePitchStore = defineStore("pitch", () => {
 
     if (userFinite && targetFinite) {
       frameTotal.value++;
-      // Hit window matches PitchDiagram's yellow band upper bound — anything that
-      // renders green or yellow on the diagram counts as a hit (≤ ~3 semitones).
+      // Hit = "right note" + "adjacent close" bands from the diagram (green or
+      // yellow). Matches PitchDiagram's segmentColor logic for consistency.
       frameHits.value +=
-        Math.abs(smoothedUserMidi! - targetMidi!) <= 3.0 ? 1 : 0;
+        Math.abs(smoothedUserMidi! - targetMidi!) <= 2.0 ? 1 : 0;
     }
   }
 
