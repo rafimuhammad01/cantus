@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from "vue";
+import { ref, watch, onUnmounted, computed } from "vue";
 
-const props = defineProps<{ src: string; hidePlayButton?: boolean }>();
+const props = defineProps<{
+  src: string;
+  hidePlayButton?: boolean;
+  variant?: "default" | "bottom-bar";
+}>();
 const audio = ref<HTMLAudioElement | null>(null);
 const isPlaying = ref(false);
 const currentTime = ref(0);
@@ -41,7 +45,6 @@ function fmt(s: number): string {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
-// When src changes, reset state and load the new source.
 watch(
   () => props.src,
   (next) => {
@@ -59,11 +62,19 @@ onUnmounted(() => {
   audio.value?.pause();
 });
 
+const isBottomBar = computed(() => props.variant === "bottom-bar");
+
 defineExpose({ audio });
 </script>
 
 <template>
-  <div class="w-full">
+  <div
+    :class="
+      isBottomBar
+        ? 'fixed bottom-0 inset-x-0 z-20 bg-[var(--color-surface)]/95 backdrop-blur border-t border-[var(--color-border)] px-4 py-3'
+        : 'w-full'
+    "
+  >
     <audio
       ref="audio"
       :src="src"
@@ -73,11 +84,17 @@ defineExpose({ audio });
       @pause="onPause"
       preload="metadata"
     />
-    <div class="flex items-center gap-3">
+    <div
+      :class="
+        isBottomBar
+          ? 'max-w-4xl mx-auto flex items-center gap-4'
+          : 'flex items-center gap-3'
+      "
+    >
       <button
         v-if="!hidePlayButton"
         @click="togglePlay"
-        class="w-12 h-12 rounded-full bg-[#2ca02c] hover:bg-[#249027] flex items-center justify-center text-white text-xl shrink-0 transition-colors"
+        class="w-12 h-12 rounded-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] flex items-center justify-center text-[#0a0a0b] text-xl shrink-0 transition-colors"
         :aria-label="isPlaying ? 'Pause' : 'Play'"
       >
         <span v-if="isPlaying">⏸</span>
@@ -85,20 +102,22 @@ defineExpose({ audio });
       </button>
       <div class="flex-1 flex items-center gap-3">
         <span
-          class="text-sm text-gray-400 tabular-nums font-mono w-12 text-right"
-          >{{ fmt(currentTime) }}</span
+          class="text-[12px] tnum text-[var(--color-text-muted)] w-12 text-right"
         >
+          {{ fmt(currentTime) }}
+        </span>
         <input
           type="range"
           :max="duration || 0"
           :value="currentTime"
           step="0.1"
           @input="onSeek"
-          class="flex-1 accent-[#2ca02c]"
+          class="flex-1 accent-[var(--color-accent)]"
+          aria-label="Seek"
         />
-        <span class="text-sm text-gray-400 tabular-nums font-mono w-12">{{
-          fmt(duration)
-        }}</span>
+        <span class="text-[12px] tnum text-[var(--color-text-muted)] w-12">
+          {{ fmt(duration) }}
+        </span>
       </div>
     </div>
   </div>
