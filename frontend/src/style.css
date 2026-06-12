@@ -29,12 +29,12 @@ body,
 }
 
 /* Tabular numerics where used inline */
-.tnum {
+@utility tnum {
   font-variant-numeric: tabular-nums;
 }
 
 /* Serif italic helper for the "musical truth" secondary lines */
-.serif-italic {
+@utility serif-italic {
   font-family: var(--font-serif);
   font-style: italic;
   font-weight: 400;
