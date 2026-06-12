@@ -53,11 +53,16 @@ func NewJobRunner(
 // without spawning a second goroutine — deduplication at the videoID level prevents
 // parallel Demucs runs racing on the same stem files.
 func (r *JobRunner) Submit(videoID string, semitones int) string {
+	// Fast path: avoid crypto/rand + hex encode when the videoID is already in-flight.
+	if existing, ok := r.inflight.Load(videoID); ok {
+		return existing.(string)
+	}
+
 	jobID := newJobID()
 
 	actual, loaded := r.inflight.LoadOrStore(videoID, jobID)
 	if loaded {
-		// Another goroutine is already processing this videoID; return its jobID.
+		// Another goroutine won the race between Load and LoadOrStore; return its jobID.
 		return actual.(string)
 	}
 

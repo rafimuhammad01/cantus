@@ -473,10 +473,12 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		jobStore := services.NewJobStore(time.Hour)
 		fakeYT := &fakeYouTubeJob{}
 
-		// blockSeparate blocks the first pipeline run inside Separate so the second
-		// Submit arrives while the first goroutine is still in-flight.
+		// ready is closed by separateFn on first entry, signalling that the first
+		// goroutine has reached Separate and is about to block.
+		// blockSeparate is closed by the test to release the first goroutine.
+		ready := make(chan struct{})
 		blockSeparate := make(chan struct{})
-		fakeProc := &fakeProcessorJob{blockSeparate: blockSeparate}
+		fakeProc := &fakeProcessorJob{}
 
 		runner := services.NewJobRunner(fakeYT, storage, fakeProc, jobStore, 2) // allow 2 concurrent so semaphore is not the bottleneck
 
@@ -487,6 +489,9 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 			return writeTestFile(p, "orig")
 		}
 		fakeProc.separateFn = func(in, outDir string) error {
+			// Signal that we have entered Separate, then block until the test releases us.
+			close(ready)
+			<-blockSeparate
 			if err := writeTestFile(filepath.Join(outDir, "vocals.wav"), "v"); err != nil {
 				return err
 			}
@@ -499,18 +504,14 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 			return writeTestFile(out, "mp3")
 		}
 
-		// First submit — this goroutine will block in Separate waiting for blockSeparate.
+		// First submit — this goroutine will block in separateFn waiting for blockSeparate.
 		jobID1 := runner.Submit(videoID, 0)
 
-		// Wait until the first job enters the pipeline (at least Downloading or Separating).
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			runtime.Gosched()
-			j, ok := jobStore.Get(jobID1)
-			if ok && (j.Status == models.StatusDownloading || j.Status == models.StatusSeparating) {
-				break
-			}
-			time.Sleep(5 * time.Millisecond)
+		// Wait until the first goroutine has entered Separate (deterministic, no sleep).
+		select {
+		case <-ready:
+		case <-time.After(2 * time.Second):
+			t.Fatal("first Submit never reached Separate")
 		}
 
 		// Second submit for the same videoID (different semitones) — must return same jobID.
