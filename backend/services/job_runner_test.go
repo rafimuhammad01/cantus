@@ -454,6 +454,175 @@ func TestJobRunner_Submit_RunsAsync(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// TestJobRunner_Submit_Dedup — videoID-level deduplication tests
+// ---------------------------------------------------------------------------
+
+func TestJobRunner_Submit_Dedup(t *testing.T) {
+	// ---------------------------------------------------------------------------
+	// Case 1: concurrent submits for the same videoID return the same jobID and
+	// only one pipeline run (Separate called once).
+	// ---------------------------------------------------------------------------
+	t.Run("concurrent same videoID returns same jobID", func(t *testing.T) {
+		root := t.TempDir()
+		storage, err := services.NewLocalDiskStorage(root)
+		if err != nil {
+			t.Fatalf("NewLocalDiskStorage: %v", err)
+		}
+		ctx := context.Background()
+
+		jobStore := services.NewJobStore(time.Hour)
+		fakeYT := &fakeYouTubeJob{}
+
+		// blockSeparate blocks the first pipeline run inside Separate so the second
+		// Submit arrives while the first goroutine is still in-flight.
+		blockSeparate := make(chan struct{})
+		fakeProc := &fakeProcessorJob{blockSeparate: blockSeparate}
+
+		runner := services.NewJobRunner(fakeYT, storage, fakeProc, jobStore, 2) // allow 2 concurrent so semaphore is not the bottleneck
+
+		const videoID = "dedupvideo1"
+
+		fakeYT.downloadFullFn = func(vid string) error {
+			p, _ := storage.LocalPath(ctx, vid, "original.wav")
+			return writeTestFile(p, "orig")
+		}
+		fakeProc.separateFn = func(in, outDir string) error {
+			if err := writeTestFile(filepath.Join(outDir, "vocals.wav"), "v"); err != nil {
+				return err
+			}
+			return writeTestFile(filepath.Join(outDir, "no_vocals.wav"), "nv")
+		}
+		fakeProc.melodyFn = func(in, out string) error {
+			return writeTestFile(out, `{}`)
+		}
+		fakeProc.shiftFn = func(in, out string, _ float64) error {
+			return writeTestFile(out, "mp3")
+		}
+
+		// First submit — this goroutine will block in Separate waiting for blockSeparate.
+		jobID1 := runner.Submit(videoID, 0)
+
+		// Wait until the first job enters the pipeline (at least Downloading or Separating).
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			runtime.Gosched()
+			j, ok := jobStore.Get(jobID1)
+			if ok && (j.Status == models.StatusDownloading || j.Status == models.StatusSeparating) {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+
+		// Second submit for the same videoID (different semitones) — must return same jobID.
+		jobID2 := runner.Submit(videoID, 3)
+
+		if jobID1 != jobID2 {
+			t.Errorf("expected dedup: jobID1=%q, jobID2=%q should be equal", jobID1, jobID2)
+		}
+
+		// Unblock the first pipeline.
+		close(blockSeparate)
+
+		// Wait for completion.
+		waitForStatus(t, jobStore, jobID1, models.StatusDone, 3*time.Second)
+
+		// Only ONE Separate call should have happened.
+		if fakeProc.separateCalls != 1 {
+			t.Errorf("separateCalls: got %d, want 1 (dedup should prevent second pipeline)", fakeProc.separateCalls)
+		}
+	})
+
+	// ---------------------------------------------------------------------------
+	// Case 2: after a job completes, the inflight entry is released so a follow-up
+	// Submit starts a fresh job with a new jobID.
+	// ---------------------------------------------------------------------------
+	t.Run("post-completion submit returns new jobID", func(t *testing.T) {
+		storage, jobStore, fakeYT, fakeProc, runner := newTestSetup(t, 1)
+		ctx := context.Background()
+		const videoID = "dedupvideo2"
+
+		fakeYT.downloadFullFn = func(vid string) error {
+			p, _ := storage.LocalPath(ctx, vid, "original.wav")
+			return writeTestFile(p, "orig")
+		}
+		fakeProc.separateFn = func(in, outDir string) error {
+			if err := writeTestFile(filepath.Join(outDir, "vocals.wav"), "v"); err != nil {
+				return err
+			}
+			return writeTestFile(filepath.Join(outDir, "no_vocals.wav"), "nv")
+		}
+		fakeProc.melodyFn = func(in, out string) error {
+			return writeTestFile(out, `{}`)
+		}
+		fakeProc.shiftFn = func(in, out string, _ float64) error {
+			return writeTestFile(out, "mp3")
+		}
+
+		jobID1 := runner.Submit(videoID, 0)
+		waitForStatus(t, jobStore, jobID1, models.StatusDone, 3*time.Second)
+
+		// Submit again after completion — must be a new job.
+		jobID2 := runner.Submit(videoID, 0)
+
+		if jobID1 == jobID2 {
+			t.Errorf("expected fresh jobID after completion, but got same jobID: %q", jobID1)
+		}
+		if jobID2 == "" {
+			t.Error("second Submit returned empty jobID")
+		}
+
+		waitForStatus(t, jobStore, jobID2, models.StatusDone, 3*time.Second)
+	})
+
+	// ---------------------------------------------------------------------------
+	// Case 3: after a job's pipeline FAILS, the inflight entry is released so a
+	// follow-up Submit for the same videoID starts a new job.
+	// ---------------------------------------------------------------------------
+	t.Run("post-failure submit returns new jobID", func(t *testing.T) {
+		storage, jobStore, fakeYT, fakeProc, runner := newTestSetup(t, 1)
+		ctx := context.Background()
+		const videoID = "dedupvideo3"
+
+		// Wire download to succeed (writes original.wav) so we reach Separate.
+		fakeYT.downloadFullFn = func(vid string) error {
+			p, _ := storage.LocalPath(ctx, vid, "original.wav")
+			return writeTestFile(p, "orig")
+		}
+		// Separate returns an error to fail the pipeline.
+		fakeProc.separateErr = errors.New("demucs: GPU OOM")
+
+		jobID1 := runner.Submit(videoID, 0)
+		waitForStatus(t, jobStore, jobID1, models.StatusError, 3*time.Second)
+
+		// Reset error so second run can succeed.
+		fakeProc.separateErr = nil
+		fakeProc.separateFn = func(in, outDir string) error {
+			if err := writeTestFile(filepath.Join(outDir, "vocals.wav"), "v"); err != nil {
+				return err
+			}
+			return writeTestFile(filepath.Join(outDir, "no_vocals.wav"), "nv")
+		}
+		fakeProc.melodyFn = func(in, out string) error {
+			return writeTestFile(out, `{}`)
+		}
+		fakeProc.shiftFn = func(in, out string, _ float64) error {
+			return writeTestFile(out, "mp3")
+		}
+
+		jobID2 := runner.Submit(videoID, 0)
+
+		if jobID1 == jobID2 {
+			t.Errorf("expected new jobID after failure, but got same jobID: %q", jobID1)
+		}
+		if jobID2 == "" {
+			t.Error("second Submit returned empty jobID")
+		}
+
+		waitForStatus(t, jobStore, jobID2, models.StatusDone, 3*time.Second)
+	})
+}
+
+// ---------------------------------------------------------------------------
 // TestJobRunner_Submit_BoundedConcurrency
 // ---------------------------------------------------------------------------
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"cantus/backend/models"
@@ -21,6 +22,7 @@ type JobRunner struct {
 	processor ProcessorClient
 	jobStore  *JobStore
 	semaphore chan struct{} // capacity = maxConcurrent
+	inflight  sync.Map      // key: videoID (string) → value: jobID (string)
 }
 
 // NewJobRunner creates a JobRunner with bounded concurrency. maxConcurrent is clamped to >= 1.
@@ -46,8 +48,20 @@ func NewJobRunner(
 // Submit registers a new job in the JobStore and runs the pipeline asynchronously.
 // It returns the job ID immediately; the goroutine blocks on the semaphore until a
 // slot is available before starting.
+//
+// If an identical videoID is already in-flight, Submit returns the existing jobID
+// without spawning a second goroutine — deduplication at the videoID level prevents
+// parallel Demucs runs racing on the same stem files.
 func (r *JobRunner) Submit(videoID string, semitones int) string {
 	jobID := newJobID()
+
+	actual, loaded := r.inflight.LoadOrStore(videoID, jobID)
+	if loaded {
+		// Another goroutine is already processing this videoID; return its jobID.
+		return actual.(string)
+	}
+
+	// We own the inflight slot. Register the job and start the goroutine.
 	r.jobStore.Create(models.Job{
 		ID:        jobID,
 		Status:    models.StatusQueued,
@@ -55,6 +69,10 @@ func (r *JobRunner) Submit(videoID string, semitones int) string {
 	})
 
 	go func() {
+		// Delete the inflight entry when the goroutine exits — covers both normal
+		// completion and panics — so future submits for this videoID start fresh.
+		defer r.inflight.Delete(videoID)
+
 		r.semaphore <- struct{}{}
 		defer func() { <-r.semaphore }()
 		r.Run(context.Background(), jobID, videoID, semitones)
