@@ -1,9 +1,41 @@
 @import "tailwindcss";
 
+@theme {
+  --color-bg: #0a0a0b;
+  --color-surface: #141416;
+  --color-surface-2: #1c1c1f;
+  --color-border: #24242a;
+  --color-text: #fafaf7;
+  --color-text-muted: #a8a8a0;
+  --color-text-faint: #5e5e58;
+  --color-accent: #e8a87c;
+  --color-accent-hover: #efb892;
+  --color-success: #7a9e7e;
+  --color-danger: #c98a8a;
+
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-serif: "Fraunces", Georgia, serif;
+}
+
 html,
 body,
 #app {
-  background: #0f0d14;
-  color: #f3f4f6;
+  background: var(--color-bg);
+  color: var(--color-text);
   min-height: 100vh;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Tabular numerics where used inline */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Serif italic helper for the "musical truth" secondary lines */
+.serif-italic {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 400;
 }
