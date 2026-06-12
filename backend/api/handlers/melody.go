@@ -148,26 +148,29 @@ func Melody(signer *services.Signer, storage services.Storage) http.HandlerFunc 
 			key = previewKey
 		}
 
-		ratio := math.Pow(2, float64(semitones)/12)
-
-		out := melodyJSON{
-			HopMs:         payload.HopMs,
-			MinHz:         payload.MinHz * ratio,
-			MaxHz:         payload.MaxHz * ratio,
-			Key:           key,
-			TransposedKey: transposeKey(key, semitones),
-			Frames:        make([][2]float64, len(payload.Frames)),
-		}
-
-		for i, frame := range payload.Frames {
-			tMs := frame[0]
-			hz := frame[1]
-			if hz != 0.0 {
-				hz = hz * ratio
-			}
-			out.Frames[i] = [2]float64{tMs, hz}
-		}
-
-		writeJSON(w, http.StatusOK, out)
+		writeJSON(w, http.StatusOK, transposeMelody(payload, semitones, key))
 	}
+}
+
+// transposeMelody returns a new melodyJSON with hz values scaled by 2^(semitones/12),
+// the key transposed via transposeKey, and unvoiced frames (hz==0) preserved as zero.
+func transposeMelody(payload melodyJSON, semitones int, key string) melodyJSON {
+	ratio := math.Pow(2, float64(semitones)/12)
+	out := melodyJSON{
+		HopMs:         payload.HopMs,
+		MinHz:         payload.MinHz * ratio,
+		MaxHz:         payload.MaxHz * ratio,
+		Key:           key,
+		TransposedKey: transposeKey(key, semitones),
+		Frames:        make([][2]float64, len(payload.Frames)),
+	}
+	for i, frame := range payload.Frames {
+		tMs := frame[0]
+		hz := frame[1]
+		if hz != 0.0 {
+			hz = hz * ratio
+		}
+		out.Frames[i] = [2]float64{tMs, hz}
+	}
+	return out
 }

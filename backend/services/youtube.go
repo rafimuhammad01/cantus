@@ -134,8 +134,8 @@ func (s *PythonYouTubeService) Search(ctx context.Context, query string, limit, 
 	return SearchPage{Items: mapped, HasMore: upstream.HasMore}, nil
 }
 
-// DownloadPreview downloads a 30-second audio clip for videoID via yt-dlp and
-// commits it to storage under the name "preview.mp3". It returns an error if
+// DownloadPreview downloads the first 30 seconds of audio for videoID via yt-dlp
+// and commits it to storage under the name "preview.mp3". It returns an error if
 // videoID is invalid, yt-dlp fails, or storage.Commit fails.
 func (s *PythonYouTubeService) DownloadPreview(ctx context.Context, videoID string) error {
 	if err := ctx.Err(); err != nil {
@@ -155,7 +155,7 @@ func (s *PythonYouTubeService) DownloadPreview(ctx context.Context, videoID stri
 	outPath := filepath.Join(tmpDir, "preview.mp3")
 
 	args := []string{
-		"--download-sections", "*30-60",
+		"--download-sections", "*0-30",
 		"-x", "--audio-format", "mp3",
 		"-o", outPath,
 		"--quiet", "--no-warnings",

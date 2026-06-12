@@ -156,13 +156,12 @@ Lets the user choose to hear the original vocalist as a guide track over the shi
 ## Post-MVP Improvement Backlog
 Captured during MVP smoke-testing. Not blockers — ordered by user-chosen priority.
 
-### Priority 1 — Preview parity with full-song flow
-The current 30s preview shifts the *full mix* (vocals + instrumental) with pyrubberband, which produces audible artifacts on the vocals — the chipmunk/formant problem the full-song pipeline already avoids by shifting only the Demucs instrumental stem. Users naturally expect preview and full-song to sound the same; today they don't. Also missing on preview: the pitch diagram with the original-singer reference line.
-- [ ] **Instrumental-only preview**: run Demucs on the 30s clip, cache `vocals.mp3` + `no_vocals.mp3` under `preview-stems/`, then shift the `no_vocals` stem (mirroring the full-song path). Reusable cache layout: `tmp/cache/{videoID}/preview-stems/{vocals,no_vocals}.mp3` + `preview-stems/shifted/{n}.mp3`.
-  - Cost: Demucs adds ~12s cold on the 30s clip (vs 90-180s on the full song). Acceptable for preview if amortized via stem cache.
-  - Tradeoff to consider: keep the current fast-path (~1-2s shift on full mix) as a fallback for the very first preview, then progressively upgrade to the stems-based preview on subsequent shifts. Or just accept the longer first-preview cold time.
-- [ ] **Pitch detection on preview**: run the same CREPE-on-vocals pipeline on the 30s preview vocals stem so the preview also has a `melody.json`. Reuses the Group 6 service code unchanged; pure cache-layout work.
-- [ ] **PitchDiagram on PreviewView**: wire the same component into PreviewView with the 30s melody. The mic + diagram UX should feel identical preview→full so the user's expectation transfers cleanly between the two flows.
+### Priority 1 — Preview parity with full-song flow ✅
+Shipped: `POST /api/preview-stems` runs Demucs + ffmpeg + CREPE on the 30s clip (idempotent, ~14s warm / ~50s cold); `GET /api/preview-audio` serves the clean instrumental stem; `GET /api/preview-melody/:videoId/:semitones` math-transposes the preview melody (same hz × 2^(n/12) helper as full-song melody, factored out for reuse). `POST /api/preview-shift` prefers the stem when cached and falls back to the legacy full-mix path during cache rollover. `PreviewView` mounts → fires `loadPreviewStems()`, shows a `ProcessingStatus` card during the ~14s wait, then reveals the audio + transpose pill + `PitchDiagram` together (Approach 1 — block on mount). KeySelector disabled until stems ready to prevent chipmunk shifts.
+- [x] **Instrumental-only preview** — `preview-stems/no_vocals.wav` + transcoded `no_vocals.mp3` cached per song; shifted versions go to `preview-stems/shifted/{n}.mp3` (clean), with legacy `preview-shifts/{n}.mp3` (full-mix) kept as fallback for backwards-compatible cache rollover.
+- [x] **Pitch detection on preview** — same CREPE pipeline produces `preview-stems/melody.json`, served math-transposed via `GET /api/preview-melody`.
+- [x] **PitchDiagram on PreviewView** — same component, same `audio.currentTime` time source, same mic + filter chain. Preview and full-song now share identical singing-feedback UX.
+- [ ] Browser smoke test — search → preview → confirm ~14s wait + clean instrumental + diagram → transpose → confirm fast iteration loop. *(User-driven; needs mic + browser.)*
 
 ### Priority 2 — Real-time lyrics (karaoke-style)
 - [ ] Lyrics source: investigate options — `lyricsgenius` (Genius API, requires token), `syrics` (Spotify time-synced), or `musixmatch` (paid). Time-synced (LRC format) is mandatory; plain lyrics aren't useful for a karaoke flow.

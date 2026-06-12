@@ -381,7 +381,7 @@ func TestPythonYouTubeService_DownloadPreview(t *testing.T) {
 
 				args := runner.gotArgs
 				mustContainArg(t, args, "--download-sections")
-				mustContainArg(t, args, "*30-60")
+				mustContainArg(t, args, "*0-30")
 				mustContainArg(t, args, "-x")
 				mustContainArg(t, args, "--audio-format")
 				mustContainArg(t, args, "mp3")

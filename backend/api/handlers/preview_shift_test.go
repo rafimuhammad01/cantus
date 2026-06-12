@@ -71,6 +71,13 @@ func (f *fakeYouTubeShift) DownloadPreview(_ context.Context, videoID string) er
 
 func (f *fakeYouTubeShift) DownloadFull(_ context.Context, _ string) error { return nil }
 
+// newErrStorage returns an errStorage that errors on Has for the given name.
+func newErrStorage(t *testing.T, errOnName string) *errStorage {
+	t.Helper()
+	real := newRealStorage(t)
+	return &errStorage{Storage: real, errOnHasName: errOnName}
+}
+
 // shiftRouter wires a chi router with the PreviewShift handler at /api/preview-shift.
 func shiftRouter(signer *services.Signer, storage services.Storage, yt services.YouTubeService, proc services.ProcessorClient) *chi.Mux {
 	r := chi.NewRouter()
@@ -328,6 +335,129 @@ func TestPreviewShiftHandler(t *testing.T) {
 			wantDownloadCalled: 0,
 			wantShiftCalled:    1,
 			wantShiftSemitones: -2.0,
+		},
+
+		// --- Stem-path tests (Cycle 3) ---
+
+		{
+			name: "stem cache hit — serve stem-shifted without compute",
+			body: shiftBody(validID, validSig, -3),
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeProcessor) {
+				st := newRealStorage(t)
+				// Pre-write the stem-shifted file.
+				p, _ := st.LocalPath(context.Background(), validID, "preview-stems/shifted/-3.mp3")
+				_ = os.MkdirAll(filepath.Dir(p), 0o755)
+				_ = os.WriteFile(p, []byte("stem shifted cached"), 0o644)
+				return st, &fakeYouTubeShift{}, &fakeProcessor{}
+			},
+			wantStatus:         http.StatusOK,
+			wantBody:           "stem shifted cached",
+			wantDownloadCalled: 0,
+			wantShiftCalled:    0,
+			wantContentTypeAny: true,
+		},
+		{
+			name: "legacy cache hit, stem-shifted absent — serve legacy",
+			body: shiftBody(validID, validSig, 5),
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeProcessor) {
+				st := newRealStorage(t)
+				// Pre-write legacy shifted, no stem-shifted file.
+				p, _ := st.LocalPath(context.Background(), validID, "preview-shifts/5.mp3")
+				_ = os.MkdirAll(filepath.Dir(p), 0o755)
+				_ = os.WriteFile(p, []byte("legacy shifted cached"), 0o644)
+				return st, &fakeYouTubeShift{}, &fakeProcessor{}
+			},
+			wantStatus:         http.StatusOK,
+			wantBody:           "legacy shifted cached",
+			wantDownloadCalled: 0,
+			wantShiftCalled:    0,
+			wantContentTypeAny: true,
+		},
+		{
+			// REGRESSION: a song that was previewed in a prior session has a legacy
+			// preview-shifts/{n}.mp3 from before this feature shipped. After
+			// preview-stems runs in the new session, the stem WAV exists. The
+			// handler MUST recompute on the stem; serving the stale legacy file
+			// would put vocals back into the audio (the chipmunk bug).
+			name: "stem WAV present + legacy cache present — must compute on stem, ignore legacy",
+			body: shiftBody(validID, validSig, -5),
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeProcessor) {
+				st := newRealStorage(t)
+				// Pre-write BOTH: stem WAV (new) and legacy shifted (stale chipmunk).
+				stemP, _ := st.LocalPath(context.Background(), validID, "preview-stems/no_vocals.wav")
+				_ = os.MkdirAll(filepath.Dir(stemP), 0o755)
+				_ = os.WriteFile(stemP, []byte("stem wav bytes"), 0o644)
+				legacyP, _ := st.LocalPath(context.Background(), validID, "preview-shifts/-5.mp3")
+				_ = os.MkdirAll(filepath.Dir(legacyP), 0o755)
+				_ = os.WriteFile(legacyP, []byte("STALE LEGACY CHIPMUNK"), 0o644)
+				proc := &fakeProcessor{writeBytes: []byte("fresh clean stem shift")}
+				return st, &fakeYouTubeShift{}, proc
+			},
+			wantStatus:         http.StatusOK,
+			wantBody:           "fresh clean stem shift",
+			wantDownloadCalled: 0,
+			wantShiftCalled:    1,
+			wantShiftSemitones: -5.0,
+			wantInputSuffix:    "preview-stems/no_vocals.wav",
+			wantCached:         "preview-stems/shifted/-5.mp3",
+			wantContentTypeAny: true,
+		},
+		{
+			name: "both shifted caches absent, stem WAV present — shifts stem",
+			body: shiftBody(validID, validSig, 4),
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeProcessor) {
+				st := newRealStorage(t)
+				// Pre-write the stem WAV only.
+				p, _ := st.LocalPath(context.Background(), validID, "preview-stems/no_vocals.wav")
+				_ = os.MkdirAll(filepath.Dir(p), 0o755)
+				_ = os.WriteFile(p, []byte("stem wav bytes"), 0o644)
+				proc := &fakeProcessor{writeBytes: []byte("stem shifted output")}
+				return st, &fakeYouTubeShift{}, proc
+			},
+			wantStatus:         http.StatusOK,
+			wantBody:           "stem shifted output",
+			wantDownloadCalled: 0,
+			wantShiftCalled:    1,
+			wantShiftSemitones: 4.0,
+			wantInputSuffix:    "preview-stems/no_vocals.wav",
+			wantCached:         "preview-stems/shifted/4.mp3",
+			wantContentTypeAny: true,
+		},
+		{
+			name: "both shifted caches absent, stem WAV also absent — legacy full-mix fallback",
+			body: shiftBody(validID, validSig, -5),
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeProcessor) {
+				st := newRealStorage(t)
+				proc := &fakeProcessor{writeBytes: []byte("legacy fallback output")}
+				yt := &fakeYouTubeShift{
+					onDownload: func(videoID string) {
+						pp, _ := st.LocalPath(context.Background(), videoID, "preview.mp3")
+						_ = os.MkdirAll(filepath.Dir(pp), 0o755)
+						_ = os.WriteFile(pp, []byte("preview bytes"), 0o644)
+					},
+				}
+				return st, yt, proc
+			},
+			wantStatus:         http.StatusOK,
+			wantBody:           "legacy fallback output",
+			wantDownloadCalled: 1,
+			wantShiftCalled:    1,
+			wantShiftSemitones: -5.0,
+			wantInputSuffix:    "/preview.mp3",
+			wantCached:         "preview-shifts/-5.mp3",
+			wantContentTypeAny: true,
+		},
+		{
+			name: "stem-shifted cache lookup error — 500",
+			body: shiftBody(validID, validSig, 2),
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeProcessor) {
+				st := newErrStorage(t, "preview-stems/shifted/2.mp3")
+				return st, &fakeYouTubeShift{}, &fakeProcessor{}
+			},
+			wantStatus:         http.StatusInternalServerError,
+			wantBodyContains:   "storage check failed",
+			wantDownloadCalled: 0,
+			wantShiftCalled:    0,
 		},
 	}
 
