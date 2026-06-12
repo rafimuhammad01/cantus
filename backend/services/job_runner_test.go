@@ -110,7 +110,7 @@ func newTestSetup(t *testing.T, maxConcurrent int) (
 	t.Helper()
 	root := t.TempDir()
 	var err error
-	storage, err = services.NewLocalDiskStorage(root, 24*time.Hour)
+	storage, err = services.NewLocalDiskStorage(root)
 	if err != nil {
 		t.Fatalf("NewLocalDiskStorage: %v", err)
 	}
@@ -461,7 +461,7 @@ func TestJobRunner_Submit_BoundedConcurrency(t *testing.T) {
 	// Build storage manually; do not use newTestSetup here because we need to
 	// wire a custom blocking processor before the runner is created.
 	root := t.TempDir()
-	storage, err := services.NewLocalDiskStorage(root, 24*time.Hour)
+	storage, err := services.NewLocalDiskStorage(root)
 	if err != nil {
 		t.Fatalf("NewLocalDiskStorage: %v", err)
 	}

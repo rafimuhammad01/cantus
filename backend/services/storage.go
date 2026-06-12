@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 // Storage abstracts cache read/write operations so handlers never touch file paths directly.
@@ -18,16 +17,18 @@ type Storage interface {
 	Open(ctx context.Context, videoID, name string) (io.ReadCloser, error)
 }
 
-// LocalDiskStorage is a TTL-aware, disk-backed Storage implementation.
+// LocalDiskStorage is a permanent, disk-backed Storage implementation.
+// Cache entries are never expired or evicted — stored files persist until
+// explicitly deleted from the filesystem (e.g. by an external lifecycle policy).
 type LocalDiskStorage struct {
 	root string
-	ttl  time.Duration
 }
 
-// NewLocalDiskStorage creates a LocalDiskStorage rooted at root with the given TTL.
+// NewLocalDiskStorage creates a LocalDiskStorage rooted at root.
 // It creates root (and any parents) if it does not exist. root is resolved to an
 // absolute path so LocalPath results are portable across services with different CWDs.
-func NewLocalDiskStorage(root string, ttl time.Duration) (*LocalDiskStorage, error) {
+// Cache entries are permanent: no TTL is enforced and no cleanup goroutine is started.
+func NewLocalDiskStorage(root string) (*LocalDiskStorage, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("storage: MkdirAll(%q): %w", root, err)
 	}
@@ -35,7 +36,7 @@ func NewLocalDiskStorage(root string, ttl time.Duration) (*LocalDiskStorage, err
 	if err != nil {
 		return nil, fmt.Errorf("storage: Abs(%q): %w", root, err)
 	}
-	return &LocalDiskStorage{root: absRoot, ttl: ttl}, nil
+	return &LocalDiskStorage{root: absRoot}, nil
 }
 
 // LocalPath returns the absolute path for (videoID, name) without performing I/O.
@@ -43,8 +44,9 @@ func (s *LocalDiskStorage) LocalPath(_ context.Context, videoID, name string) (s
 	return filepath.Join(s.root, videoID, name), nil
 }
 
-// Has reports whether (videoID, name) is present in cache and within its TTL.
-// A stale file returns (false, nil); a missing file returns (false, nil).
+// Has reports whether (videoID, name) is present in cache with non-zero size.
+// A missing file returns (false, nil). A zero-byte file also returns (false, nil)
+// so that a corrupt or incomplete cache entry forces regeneration.
 func (s *LocalDiskStorage) Has(ctx context.Context, videoID, name string) (bool, error) {
 	path, err := s.LocalPath(ctx, videoID, name)
 	if err != nil {
@@ -59,7 +61,7 @@ func (s *LocalDiskStorage) Has(ctx context.Context, videoID, name string) (bool,
 		return false, err
 	}
 
-	return time.Since(info.ModTime()) <= s.ttl, nil
+	return info.Size() > 0, nil
 }
 
 // Commit moves localPath into the cache at (videoID, name). If localPath is
@@ -87,7 +89,7 @@ func (s *LocalDiskStorage) Commit(ctx context.Context, videoID, name, localPath 
 }
 
 // Open returns a ReadCloser for (videoID, name). It returns an os.ErrNotExist-
-// wrapped error when the file is missing or stale.
+// wrapped error when the file is missing or zero-byte (corrupt cache entry).
 func (s *LocalDiskStorage) Open(ctx context.Context, videoID, name string) (io.ReadCloser, error) {
 	ok, err := s.Has(ctx, videoID, name)
 	if err != nil {
@@ -108,68 +110,4 @@ func (s *LocalDiskStorage) Open(ctx context.Context, videoID, name string) (io.R
 	}
 
 	return f, nil
-}
-
-// Cleanup removes all files under root whose mtime exceeds the TTL, then
-// removes any empty per-videoID subdirectories. It returns the count of files
-// removed and any walk error.
-func (s *LocalDiskStorage) Cleanup() (int, error) {
-	count := 0
-
-	err := filepath.WalkDir(s.root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-
-		info, statErr := os.Stat(path)
-		if statErr != nil {
-			return nil // file vanished between WalkDir and Stat; skip
-		}
-
-		if time.Since(info.ModTime()) > s.ttl {
-			if removeErr := os.Remove(path); removeErr == nil {
-				count++
-			}
-		}
-
-		return nil
-	})
-
-	// Second pass: prune empty videoID subdirectories.
-	entries, readErr := os.ReadDir(s.root)
-	if readErr == nil {
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			dir := filepath.Join(s.root, e.Name())
-			children, _ := os.ReadDir(dir)
-			if len(children) == 0 {
-				_ = os.Remove(dir)
-			}
-		}
-	}
-
-	return count, err
-}
-
-// StartCleanup launches a background goroutine that calls Cleanup on every
-// interval tick until ctx is cancelled.
-func (s *LocalDiskStorage) StartCleanup(ctx context.Context, interval time.Duration) {
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				_, _ = s.Cleanup()
-			}
-		}
-	}()
 }

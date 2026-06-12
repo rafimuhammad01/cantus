@@ -12,16 +12,14 @@ const minSigningKeyLen = 32
 // Values are read from environment variables; missing/empty vars fall back
 // to the documented defaults.
 type Config struct {
-	PythonProcessorURL      string // PYTHON_PROCESSOR_URL, default "http://localhost:8090"
-	AudioTmpDir             string // AUDIO_TMP_DIR, default "./tmp"
-	CacheDir                string // CACHE_DIR, default "./tmp/cache"
-	CacheTTLHours           int    // CACHE_TTL_HOURS, default 24
-	CacheCleanupIntervalMin int    // CACHE_CLEANUP_INTERVAL_MIN, default 10
-	MaxConcurrentJobs       int    // MAX_CONCURRENT_JOBS, default 1
-	AllowedOrigins          string // ALLOWED_ORIGINS, default "http://localhost:5173"
-	Port                    int    // PORT, default 8080
-	VideoIDSigningKey       string // VIDEO_ID_SIGNING_KEY, required, >= 32 chars
-	LogLevel                string // LOG_LEVEL, one of debug/info/warn/error, default "info"
+	PythonProcessorURL string // PYTHON_PROCESSOR_URL, default "http://localhost:8090"
+	AudioTmpDir        string // AUDIO_TMP_DIR, default "./tmp"
+	CacheDir           string // CACHE_DIR, default "./tmp/cache"
+	MaxConcurrentJobs  int    // MAX_CONCURRENT_JOBS, default 1
+	AllowedOrigins     string // ALLOWED_ORIGINS, default "http://localhost:5173"
+	Port               int    // PORT, default 8080
+	VideoIDSigningKey  string // VIDEO_ID_SIGNING_KEY, required, >= 32 chars
+	LogLevel           string // LOG_LEVEL, one of debug/info/warn/error, default "info"
 }
 
 // Load reads environment variables and returns a validated Config.
@@ -52,12 +50,6 @@ func Load() (*Config, error) {
 
 	// Integer fields with defaults.
 	var err error
-	if cfg.CacheTTLHours, err = getEnvInt("CACHE_TTL_HOURS", 24); err != nil {
-		return nil, err
-	}
-	if cfg.CacheCleanupIntervalMin, err = getEnvInt("CACHE_CLEANUP_INTERVAL_MIN", 10); err != nil {
-		return nil, err
-	}
 	if cfg.MaxConcurrentJobs, err = getEnvInt("MAX_CONCURRENT_JOBS", 1); err != nil {
 		return nil, err
 	}

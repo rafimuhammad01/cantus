@@ -27,12 +27,6 @@ func TestLoad_HappyPath_WithDefaults(t *testing.T) {
 	if cfg.CacheDir != "./tmp/cache" {
 		t.Errorf("CacheDir: got %q, want %q", cfg.CacheDir, "./tmp/cache")
 	}
-	if cfg.CacheTTLHours != 24 {
-		t.Errorf("CacheTTLHours: got %d, want %d", cfg.CacheTTLHours, 24)
-	}
-	if cfg.CacheCleanupIntervalMin != 10 {
-		t.Errorf("CacheCleanupIntervalMin: got %d, want %d", cfg.CacheCleanupIntervalMin, 10)
-	}
 	if cfg.MaxConcurrentJobs != 1 {
 		t.Errorf("MaxConcurrentJobs: got %d, want %d", cfg.MaxConcurrentJobs, 1)
 	}
@@ -56,8 +50,6 @@ func TestLoad_HappyPath_AllExplicit(t *testing.T) {
 	t.Setenv("PYTHON_PROCESSOR_URL", "http://python:9999")
 	t.Setenv("AUDIO_TMP_DIR", "/var/audio/tmp")
 	t.Setenv("CACHE_DIR", "/var/audio/cache")
-	t.Setenv("CACHE_TTL_HOURS", "48")
-	t.Setenv("CACHE_CLEANUP_INTERVAL_MIN", "30")
 	t.Setenv("MAX_CONCURRENT_JOBS", "5")
 	t.Setenv("ALLOWED_ORIGINS", "https://example.com")
 	t.Setenv("PORT", "9090")
@@ -75,12 +67,6 @@ func TestLoad_HappyPath_AllExplicit(t *testing.T) {
 	}
 	if cfg.CacheDir != "/var/audio/cache" {
 		t.Errorf("CacheDir: got %q, want %q", cfg.CacheDir, "/var/audio/cache")
-	}
-	if cfg.CacheTTLHours != 48 {
-		t.Errorf("CacheTTLHours: got %d, want %d", cfg.CacheTTLHours, 48)
-	}
-	if cfg.CacheCleanupIntervalMin != 30 {
-		t.Errorf("CacheCleanupIntervalMin: got %d, want %d", cfg.CacheCleanupIntervalMin, 30)
 	}
 	if cfg.MaxConcurrentJobs != 5 {
 		t.Errorf("MaxConcurrentJobs: got %d, want %d", cfg.MaxConcurrentJobs, 5)
@@ -214,22 +200,6 @@ func TestLoad_ErrorCases(t *testing.T) {
 				t.Setenv("PORT", "not-a-number")
 			},
 			wantErrSub: "PORT",
-		},
-		{
-			name: "invalid CACHE_TTL_HOURS",
-			setup: func(t *testing.T) {
-				t.Setenv("VIDEO_ID_SIGNING_KEY", validKey)
-				t.Setenv("CACHE_TTL_HOURS", "banana")
-			},
-			wantErrSub: "CACHE_TTL_HOURS",
-		},
-		{
-			name: "invalid CACHE_CLEANUP_INTERVAL_MIN",
-			setup: func(t *testing.T) {
-				t.Setenv("VIDEO_ID_SIGNING_KEY", validKey)
-				t.Setenv("CACHE_CLEANUP_INTERVAL_MIN", "??")
-			},
-			wantErrSub: "CACHE_CLEANUP_INTERVAL_MIN",
 		},
 		{
 			name: "invalid MAX_CONCURRENT_JOBS",

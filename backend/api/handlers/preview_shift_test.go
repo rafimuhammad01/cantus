@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -98,7 +97,7 @@ func newShiftSigner(t *testing.T) *services.Signer {
 // newRealStorage returns a LocalDiskStorage rooted at a temp dir.
 func newRealStorage(t *testing.T) *services.LocalDiskStorage {
 	t.Helper()
-	st, err := services.NewLocalDiskStorage(t.TempDir(), 1*time.Hour)
+	st, err := services.NewLocalDiskStorage(t.TempDir())
 	if err != nil {
 		t.Fatalf("services.NewLocalDiskStorage: %v", err)
 	}

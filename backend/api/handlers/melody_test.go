@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -38,7 +37,7 @@ func newMelodySigner(t *testing.T) *services.Signer {
 // newMelodyStorage returns a LocalDiskStorage rooted at a temp dir.
 func newMelodyStorage(t *testing.T) *services.LocalDiskStorage {
 	t.Helper()
-	st, err := services.NewLocalDiskStorage(t.TempDir(), 1*time.Hour)
+	st, err := services.NewLocalDiskStorage(t.TempDir())
 	if err != nil {
 		t.Fatalf("services.NewLocalDiskStorage: %v", err)
 	}

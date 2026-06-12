@@ -15,7 +15,8 @@ import (
 )
 
 // writeFileAged writes content to path (creating parent dirs), then backdates
-// the mtime by age so that Has/Cleanup see the file as old.
+// the mtime by age. Used to verify that old files are still reported as present
+// (permanent cache — no TTL eviction).
 func writeFileAged(t *testing.T, path, content string, age time.Duration) {
 	t.Helper()
 
@@ -35,12 +36,12 @@ func writeFileAged(t *testing.T, path, content string, age time.Duration) {
 }
 
 // mustNewLocalDiskStorage calls NewLocalDiskStorage and fails the test on error.
-func mustNewLocalDiskStorage(t *testing.T, root string, ttl time.Duration) *services.LocalDiskStorage {
+func mustNewLocalDiskStorage(t *testing.T, root string) *services.LocalDiskStorage {
 	t.Helper()
 
-	s, err := services.NewLocalDiskStorage(root, ttl)
+	s, err := services.NewLocalDiskStorage(root)
 	if err != nil {
-		t.Fatalf("NewLocalDiskStorage(%q, %v): unexpected error: %v", root, ttl, err)
+		t.Fatalf("NewLocalDiskStorage(%q): unexpected error: %v", root, err)
 	}
 
 	return s
@@ -67,7 +68,7 @@ func TestLocalDiskStorage_LocalPath_AlwaysAbsolute(t *testing.T) {
 				t.Fatalf("os.Chdir: %v", err)
 			}
 
-			s := mustNewLocalDiskStorage(t, "./relroot", time.Hour)
+			s := mustNewLocalDiskStorage(t, "./relroot")
 
 			got, err := s.LocalPath(context.Background(), "dQw4w9WgXcQ", "preview.mp3")
 			if err != nil {
@@ -106,7 +107,7 @@ func TestLocalDiskStorage_LocalPath(t *testing.T) {
 		},
 	}
 
-	s := mustNewLocalDiskStorage(t, root, time.Hour)
+	s := mustNewLocalDiskStorage(t, root)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -131,34 +132,43 @@ func TestLocalDiskStorage_LocalPath(t *testing.T) {
 	}
 }
 
-// TestLocalDiskStorage_Has verifies that Has returns true only for files that
-// exist AND whose mtime is within the TTL window.
+// TestLocalDiskStorage_Has verifies that Has returns true iff the file exists
+// AND has non-zero size. Old files (well past any previous TTL) are still
+// reported present — cache is permanent.
 func TestLocalDiskStorage_Has(t *testing.T) {
-	const ttl = time.Hour
 	ctx := context.Background()
 
 	tests := []struct {
-		name   string
-		create bool
-		age    time.Duration
-		want   bool
+		name    string
+		create  bool
+		content string
+		age     time.Duration
+		want    bool
 	}{
 		{
-			name:   "exists and fresh",
-			create: true,
-			age:    0,
-			want:   true,
+			name:    "exists with content",
+			create:  true,
+			content: "audio data",
+			age:     0,
+			want:    true,
 		},
 		{
-			name:   "exists but stale (older than TTL)",
-			create: true,
-			age:    2 * time.Hour,
-			want:   false,
+			name:    "exists but zero-byte (corrupt cache entry)",
+			create:  true,
+			content: "",
+			age:     0,
+			want:    false,
+		},
+		{
+			name:    "old file well past previous TTL is still present (permanent cache)",
+			create:  true,
+			content: "audio data",
+			age:     30 * 24 * time.Hour, // 30 days ago
+			want:    true,
 		},
 		{
 			name:   "does not exist",
 			create: false,
-			age:    0,
 			want:   false,
 		},
 	}
@@ -166,7 +176,7 @@ func TestLocalDiskStorage_Has(t *testing.T) {
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			s := mustNewLocalDiskStorage(t, root, ttl)
+			s := mustNewLocalDiskStorage(t, root)
 
 			videoID := fmt.Sprintf("videoHas%04d", i)
 			name := "preview.mp3"
@@ -176,7 +186,7 @@ func TestLocalDiskStorage_Has(t *testing.T) {
 				if err != nil {
 					t.Fatalf("LocalPath: %v", err)
 				}
-				writeFileAged(t, path, "audio data", tt.age)
+				writeFileAged(t, path, tt.content, tt.age)
 			}
 
 			got, err := s.Has(ctx, videoID, name)
@@ -195,7 +205,6 @@ func TestLocalDiskStorage_Has(t *testing.T) {
 // at the expected path, handles the no-op in-place case, and creates parent
 // directories when needed.
 func TestLocalDiskStorage_Commit(t *testing.T) {
-	const ttl = time.Hour
 	ctx := context.Background()
 
 	tests := []struct {
@@ -209,7 +218,7 @@ func TestLocalDiskStorage_Commit(t *testing.T) {
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			s := mustNewLocalDiskStorage(t, root, ttl)
+			s := mustNewLocalDiskStorage(t, root)
 
 			videoID := fmt.Sprintf("videoCommit%04d", i)
 			const wantContent = "audio bytes"
@@ -304,24 +313,21 @@ func TestLocalDiskStorage_Commit(t *testing.T) {
 	}
 }
 
-// TestLocalDiskStorage_Open verifies that Open returns a valid reader for fresh
-// files and os.ErrNotExist-wrapped errors for missing or stale ones.
+// TestLocalDiskStorage_Open verifies that Open returns a valid reader for
+// existing files and os.ErrNotExist-wrapped errors for missing or zero-byte files.
 func TestLocalDiskStorage_Open(t *testing.T) {
-	const ttl = time.Hour
 	ctx := context.Background()
 
 	tests := []struct {
 		name              string
 		create            bool
-		age               time.Duration
-		wantContent       string
+		content           string
 		wantErrIsNotExist bool
 	}{
 		{
-			name:              "open existing fresh file returns reader with correct content",
+			name:              "open existing file returns reader with correct content",
 			create:            true,
-			age:               0,
-			wantContent:       "hello",
+			content:           "hello",
 			wantErrIsNotExist: false,
 		},
 		{
@@ -330,9 +336,9 @@ func TestLocalDiskStorage_Open(t *testing.T) {
 			wantErrIsNotExist: true,
 		},
 		{
-			name:              "open stale file returns os.ErrNotExist (TTL gating)",
+			name:              "open zero-byte file returns os.ErrNotExist (corrupt cache)",
 			create:            true,
-			age:               2 * time.Hour,
+			content:           "",
 			wantErrIsNotExist: true,
 		},
 	}
@@ -340,7 +346,7 @@ func TestLocalDiskStorage_Open(t *testing.T) {
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			s := mustNewLocalDiskStorage(t, root, ttl)
+			s := mustNewLocalDiskStorage(t, root)
 
 			videoID := fmt.Sprintf("videoOpen%04d", i)
 			name := "preview.mp3"
@@ -350,7 +356,7 @@ func TestLocalDiskStorage_Open(t *testing.T) {
 				if err != nil {
 					t.Fatalf("LocalPath: %v", err)
 				}
-				writeFileAged(t, path, tt.wantContent, tt.age)
+				writeFileAged(t, path, tt.content, 0)
 			}
 
 			rc, err := s.Open(ctx, videoID, name)
@@ -379,186 +385,8 @@ func TestLocalDiskStorage_Open(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ReadAll from Open reader: %v", err)
 			}
-			if string(raw) != tt.wantContent {
-				t.Errorf("Open(%q, %q) content = %q, want %q", videoID, name, string(raw), tt.wantContent)
-			}
-		})
-	}
-}
-
-// TestLocalDiskStorage_Cleanup verifies that Cleanup removes only stale files,
-// returns an accurate eviction count, and leaves fresh files untouched.
-func TestLocalDiskStorage_Cleanup(t *testing.T) {
-	const ttl = time.Hour
-	ctx := context.Background()
-
-	type fileCase struct {
-		name        string
-		age         time.Duration
-		wantPresent bool
-	}
-
-	tests := []fileCase{
-		{name: "fresh file kept", age: 0, wantPresent: true},
-		{name: "stale file evicted", age: 2 * time.Hour, wantPresent: false},
-		{name: "another stale file evicted", age: 3 * time.Hour, wantPresent: false},
-	}
-
-	root := t.TempDir()
-	s := mustNewLocalDiskStorage(t, root, ttl)
-
-	type fileRecord struct {
-		videoID string
-		name    string
-		path    string
-	}
-
-	records := make([]fileRecord, len(tests))
-
-	for i, tc := range tests {
-		videoID := fmt.Sprintf("videoCleanup%04d", i)
-		fileName := "audio.mp3"
-
-		path, err := s.LocalPath(ctx, videoID, fileName)
-		if err != nil {
-			t.Fatalf("LocalPath for case %q: %v", tc.name, err)
-		}
-		writeFileAged(t, path, "data", tc.age)
-
-		records[i] = fileRecord{videoID: videoID, name: fileName, path: path}
-	}
-
-	wantEvicted := 0
-	for _, tc := range tests {
-		if !tc.wantPresent {
-			wantEvicted++
-		}
-	}
-
-	gotCount, err := s.Cleanup()
-	if err != nil {
-		t.Fatalf("Cleanup(): unexpected error: %v", err)
-	}
-	if gotCount != wantEvicted {
-		t.Errorf("Cleanup(): evicted %d, want %d", gotCount, wantEvicted)
-	}
-
-	for i, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			_, statErr := os.Stat(records[i].path)
-			present := statErr == nil
-
-			if present != tc.wantPresent {
-				t.Errorf("file %q: present on disk = %v, want %v", records[i].path, present, tc.wantPresent)
-			}
-		})
-	}
-}
-
-// TestLocalDiskStorage_Cleanup_PrunesEmptyVideoIDDirs verifies that Cleanup
-// removes a {videoID}/ directory when all its files have been evicted.
-func TestLocalDiskStorage_Cleanup_PrunesEmptyVideoIDDirs(t *testing.T) {
-	const ttl = time.Hour
-	ctx := context.Background()
-
-	tests := []struct {
-		name string
-	}{
-		{name: "empty videoID dir is removed after its only file is evicted"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			root := t.TempDir()
-			s := mustNewLocalDiskStorage(t, root, ttl)
-
-			videoID := "videoCleanupPrune0001"
-			fileName := "audio.mp3"
-
-			path, err := s.LocalPath(ctx, videoID, fileName)
-			if err != nil {
-				t.Fatalf("LocalPath: %v", err)
-			}
-			writeFileAged(t, path, "data", 2*time.Hour)
-
-			videoDir := filepath.Join(root, videoID)
-
-			_, err = s.Cleanup()
-			if err != nil {
-				t.Fatalf("Cleanup(): unexpected error: %v", err)
-			}
-
-			_, statErr := os.Stat(videoDir)
-			if !errors.Is(statErr, os.ErrNotExist) {
-				t.Errorf("videoID dir %q still exists after Cleanup evicted its only file, want removed", videoDir)
-			}
-		})
-	}
-}
-
-// TestLocalDiskStorage_StartCleanup_StopsOnContextCancel verifies that
-// StartCleanup runs the cleanup goroutine on an interval and stops cleanly
-// when its context is cancelled.
-func TestLocalDiskStorage_StartCleanup_StopsOnContextCancel(t *testing.T) {
-	tests := []struct {
-		name string
-	}{
-		{name: "goroutine evicts stale file then stops on cancel"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			const ttl = time.Millisecond
-
-			root := t.TempDir()
-			s := mustNewLocalDiskStorage(t, root, ttl)
-			ctx := context.Background()
-
-			// Create a stale file — well past the 1 ms TTL.
-			videoID1 := "videoStartCleanup0001"
-			stalePath, err := s.LocalPath(ctx, videoID1, "audio.mp3")
-			if err != nil {
-				t.Fatalf("LocalPath: %v", err)
-			}
-			writeFileAged(t, stalePath, "stale data", time.Second)
-
-			cancelCtx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			s.StartCleanup(cancelCtx, 5*time.Millisecond)
-
-			// Poll up to 500 ms for the stale file to be removed.
-			deadline := time.Now().Add(500 * time.Millisecond)
-			removed := false
-			for time.Now().Before(deadline) {
-				if _, statErr := os.Stat(stalePath); errors.Is(statErr, os.ErrNotExist) {
-					removed = true
-					break
-				}
-				time.Sleep(20 * time.Millisecond)
-			}
-
-			if !removed {
-				t.Fatalf("StartCleanup: stale file %q was not removed within 500 ms", stalePath)
-			}
-
-			// Cancel the context; give the goroutine time to notice.
-			cancel()
-			time.Sleep(50 * time.Millisecond)
-
-			// Create another stale file after cancellation.
-			videoID2 := "videoStartCleanup0002"
-			afterCancelPath, err := s.LocalPath(ctx, videoID2, "audio.mp3")
-			if err != nil {
-				t.Fatalf("LocalPath (post-cancel): %v", err)
-			}
-			writeFileAged(t, afterCancelPath, "post-cancel stale", time.Second)
-
-			time.Sleep(50 * time.Millisecond)
-
-			// The file must still exist — the goroutine must be stopped.
-			if _, statErr := os.Stat(afterCancelPath); errors.Is(statErr, os.ErrNotExist) {
-				t.Errorf("StartCleanup: file %q was cleaned up after context cancel, want goroutine stopped", afterCancelPath)
+			if string(raw) != tt.content {
+				t.Errorf("Open(%q, %q) content = %q, want %q", videoID, name, string(raw), tt.content)
 			}
 		})
 	}

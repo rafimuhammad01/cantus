@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -36,7 +35,7 @@ func newPreviewAudioSigner(t *testing.T) *services.Signer {
 // newPreviewAudioStorage returns a LocalDiskStorage rooted at a temp dir.
 func newPreviewAudioStorage(t *testing.T) *services.LocalDiskStorage {
 	t.Helper()
-	st, err := services.NewLocalDiskStorage(t.TempDir(), 1*time.Hour)
+	st, err := services.NewLocalDiskStorage(t.TempDir())
 	if err != nil {
 		t.Fatalf("services.NewLocalDiskStorage: %v", err)
 	}

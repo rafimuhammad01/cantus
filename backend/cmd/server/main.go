@@ -36,15 +36,13 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to create signer")
 	}
 
-	storage, err := services.NewLocalDiskStorage(cfg.CacheDir, time.Duration(cfg.CacheTTLHours)*time.Hour)
+	storage, err := services.NewLocalDiskStorage(cfg.CacheDir)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create storage")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	storage.StartCleanup(ctx, time.Duration(cfg.CacheCleanupIntervalMin)*time.Minute)
 
 	svc := services.NewPythonYouTubeService(
 		cfg.PythonProcessorURL,

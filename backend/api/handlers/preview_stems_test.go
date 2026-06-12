@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -93,7 +92,7 @@ func (e *errStorage) Has(ctx context.Context, videoID, name string) (bool, error
 // newStemsStorage returns a LocalDiskStorage rooted at a temp dir.
 func newStemsStorage(t *testing.T) *services.LocalDiskStorage {
 	t.Helper()
-	st, err := services.NewLocalDiskStorage(t.TempDir(), 1*time.Hour)
+	st, err := services.NewLocalDiskStorage(t.TempDir())
 	if err != nil {
 		t.Fatalf("services.NewLocalDiskStorage: %v", err)
 	}
