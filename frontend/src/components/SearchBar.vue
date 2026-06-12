@@ -17,7 +17,7 @@ function onSubmit() {
       type="search"
       placeholder="Search for a song"
       autocomplete="off"
-      class="w-full px-6 py-4 text-lg rounded-full bg-[#1a1822] border border-[#2a2730] focus:border-[#2ca02c] focus:outline-none text-white placeholder-gray-500 transition-colors"
+      class="w-full px-6 py-4 text-lg rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:outline-none text-[var(--color-text)] placeholder-[var(--color-text-faint)] transition-all"
     />
   </form>
 </template>
