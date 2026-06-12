@@ -49,26 +49,6 @@ const fullAudioSrc = computed(() =>
 const pendingSemitones = ref(routeSemitones.value);
 let navTimer: ReturnType<typeof setTimeout> | null = null;
 
-const originalShort = computed(() => shortKey(player.originalKey ?? ""));
-// Use the pending value so the key display reads "A → D" the moment the user
-// finishes clicking, not after the page navigates and reloads melody.
-const transposedShort = computed(() => {
-  const base = player.originalKey ?? "";
-  if (!base) return "";
-  // pendingSemitones already reflects the user's intent; transposedKey from
-  // the store is for the route's current semitones which lags during debounce.
-  if (pendingSemitones.value === routeSemitones.value) {
-    return shortKey(player.transposedKey ?? "");
-  }
-  return shortKey(transposeKey(base, pendingSemitones.value));
-});
-const showKeyLine = computed(() => player.originalKey !== null);
-const keyDisplay = computed(() => {
-  if (!originalShort.value) return "";
-  if (pendingSemitones.value === 0) return `Key: ${originalShort.value}`;
-  return `Key: ${originalShort.value} → ${transposedShort.value}`;
-});
-
 async function loadDoneArtifacts() {
   if (!player.videoId || !player.sig) return;
   try {
@@ -166,99 +146,125 @@ onMounted(() => {
   }
 });
 
-function fmtDuration(sec: number): string {
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
 onUnmounted(() => {
   if (navTimer !== null) clearTimeout(navTimer);
 });
 </script>
 
 <template>
-  <div class="max-w-3xl w-full mx-auto px-4 py-8 min-h-screen">
-    <button
-      @click="router.push(`/preview/${routeVideoId}`)"
-      class="mb-6 text-sm text-gray-400 hover:text-white transition-colors"
-    >
-      ← Back to preview
-    </button>
-
+  <div class="min-h-screen pb-28">
     <template v-if="!noContext">
-      <!-- Song header -->
-      <div class="mb-6">
-        <h1 class="text-3xl font-bold text-white mb-1">
-          {{ player.song?.title }}
-        </h1>
-        <div class="text-gray-400">
-          <span>by {{ player.song?.artist }}</span>
-          <template v-if="player.song?.album">
-            · {{ player.song.album }}</template
+      <!-- Slim top bar -->
+      <header
+        class="sticky top-0 z-10 bg-[var(--color-surface)]/95 backdrop-blur border-b border-[var(--color-border)]"
+      >
+        <div class="max-w-6xl mx-auto px-4 h-16 flex items-center gap-3">
+          <button
+            @click="router.push(`/preview/${routeVideoId}`)"
+            class="text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0"
+            aria-label="Back to preview"
           >
-          <template v-if="player.song?.duration_sec">
-            · {{ fmtDuration(player.song.duration_sec) }}
-          </template>
+            ←
+          </button>
+          <img
+            v-if="player.song?.thumbnail_url"
+            :src="player.song.thumbnail_url"
+            :alt="player.song.title"
+            class="w-10 h-10 rounded-md object-cover shrink-0"
+          />
+          <div class="min-w-0 flex-1">
+            <div
+              class="font-serif text-[16px] leading-tight truncate text-[var(--color-text)]"
+            >
+              {{ player.song?.title }}
+            </div>
+            <div class="text-[12px] text-[var(--color-text-muted)] truncate">
+              {{ player.song?.artist }}
+              <template v-if="player.song?.album">
+                · {{ player.song.album }}</template
+              >
+            </div>
+          </div>
+          <div class="hidden md:flex items-center gap-4 shrink-0">
+            <KeySelector
+              :semitones="pendingSemitones"
+              :original-key="
+                player.originalKey ? shortKey(player.originalKey) : undefined
+              "
+              :transposed-key="
+                player.originalKey
+                  ? shortKey(transposeKey(player.originalKey, pendingSemitones))
+                  : undefined
+              "
+              @change="onSemitonesChange"
+            />
+            <VocalOctaveSelector
+              :current="player.vocalOctaveShift"
+              :disabled="player.jobStatus !== 'done'"
+              :range="
+                player.vocalRange
+                  ? `${midiToNoteName(player.vocalRange.minMidi)} – ${midiToNoteName(player.vocalRange.maxMidi)}`
+                  : undefined
+              "
+              @change="player.setVocalOctaveShift"
+            />
+          </div>
         </div>
-      </div>
+      </header>
 
-      <!-- Transpose pill (rapid clicks debounce into one nav after 600ms) -->
-      <div class="flex items-center gap-4 mb-3">
+      <!-- Mobile control row (below the slim top bar) -->
+      <div
+        class="md:hidden max-w-6xl mx-auto px-4 py-4 flex flex-wrap items-end justify-center gap-4"
+      >
         <KeySelector
           :semitones="pendingSemitones"
+          :original-key="
+            player.originalKey ? shortKey(player.originalKey) : undefined
+          "
+          :transposed-key="
+            player.originalKey
+              ? shortKey(transposeKey(player.originalKey, pendingSemitones))
+              : undefined
+          "
           @change="onSemitonesChange"
         />
-      </div>
-
-      <!-- Key display -->
-      <div v-if="showKeyLine" class="mb-3 text-gray-300">{{ keyDisplay }}</div>
-      <div v-else class="mb-3 text-gray-600 text-sm">&nbsp;</div>
-
-      <!-- Vocal octave selector — shifts only the displayed target line, not the audio -->
-      <div class="flex items-center gap-4 mb-2">
         <VocalOctaveSelector
           :current="player.vocalOctaveShift"
           :disabled="player.jobStatus !== 'done'"
+          :range="
+            player.vocalRange
+              ? `${midiToNoteName(player.vocalRange.minMidi)} – ${midiToNoteName(player.vocalRange.maxMidi)}`
+              : undefined
+          "
           @change="player.setVocalOctaveShift"
         />
       </div>
-      <div class="mb-6 text-gray-300 text-sm min-h-[1.25rem]">
-        <template v-if="player.melody && player.vocalRange !== null">
-          Vocal: {{ midiToNoteName(player.vocalRange.minMidi) }} –
-          {{ midiToNoteName(player.vocalRange.maxMidi) }}
-        </template>
-      </div>
 
-      <!-- SSE progress while in-flight; audio player when done -->
-      <div v-if="!isDone" class="mb-6">
-        <ProcessingStatus
-          :status="player.jobStatus"
-          :message="player.jobMessage"
+      <!-- Main hero area -->
+      <main class="max-w-6xl mx-auto px-4 py-6">
+        <div v-if="!isDone" class="py-12">
+          <ProcessingStatus
+            :status="player.jobStatus"
+            :message="player.jobMessage"
+          />
+        </div>
+
+        <PitchDiagram
+          v-else-if="player.melody && audioPlayerRef?.audio"
+          :key="`${routeSemitones}-${player.vocalOctaveShift}`"
+          :audio-el="audioPlayerRef.audio!"
+          :melody="player.melody"
+          :vocal-octave-shift="player.vocalOctaveShift"
         />
-      </div>
+      </main>
 
-      <div
-        v-else
-        class="mb-6 rounded-xl p-4 bg-[#1a1822] border border-[#2a2730]"
-      >
-        <AudioPlayer
-          ref="audioPlayerRef"
-          :src="fullAudioSrc"
-          :hide-play-button="true"
-        />
-      </div>
-
-      <!-- Pitch diagram: shown once generate is done, melody is loaded, and audio element exists.
-           :key on routeSemitones forces a clean remount on transpose so user-history + targetSeries reset. -->
-      <PitchDiagram
-        v-if="
-          player.melody && player.jobStatus === 'done' && audioPlayerRef?.audio
-        "
-        :key="`${routeSemitones}-${player.vocalOctaveShift}`"
-        :audio-el="audioPlayerRef.audio!"
-        :melody="player.melody"
-        :vocal-octave-shift="player.vocalOctaveShift"
+      <!-- Sticky bottom transport (scrubber only — Play & Sing lives in PitchDiagram) -->
+      <AudioPlayer
+        v-if="isDone"
+        ref="audioPlayerRef"
+        :src="fullAudioSrc"
+        :hide-play-button="true"
+        variant="bottom-bar"
       />
     </template>
   </div>
