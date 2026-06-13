@@ -21,6 +21,11 @@ type Config struct {
 	VideoIDSigningKey  string // VIDEO_ID_SIGNING_KEY, required, >= 32 chars
 	LogLevel           string // LOG_LEVEL, one of debug/info/warn/error, default "info"
 
+	CPUProcessorURL            string // CPU_PROCESSOR_URL, default = PYTHON_PROCESSOR_URL
+	GPUProcessorURL            string // GPU_PROCESSOR_URL, default = PYTHON_PROCESSOR_URL
+	CPUProcessorTimeoutSeconds int    // CPU_PROCESSOR_TIMEOUT_SECONDS, default 30
+	GPUProcessorTimeoutSeconds int    // GPU_PROCESSOR_TIMEOUT_SECONDS, default 180
+
 	StorageBackend      string // STORAGE_BACKEND, "local" or "r2"; default "local"
 	BlobBaseURL         string // BLOB_BASE_URL, default "http://localhost:8080" (local mode only)
 	R2AccountID         string // R2_ACCOUNT_ID, required if r2
@@ -52,6 +57,8 @@ func Load() (*Config, error) {
 
 	// String fields with defaults.
 	cfg.PythonProcessorURL = getEnvString("PYTHON_PROCESSOR_URL", "http://localhost:8090")
+	cfg.CPUProcessorURL = getEnvString("CPU_PROCESSOR_URL", cfg.PythonProcessorURL)
+	cfg.GPUProcessorURL = getEnvString("GPU_PROCESSOR_URL", cfg.PythonProcessorURL)
 	cfg.AudioTmpDir = getEnvString("AUDIO_TMP_DIR", "./tmp")
 	cfg.CacheDir = getEnvString("CACHE_DIR", "./tmp/cache")
 	cfg.AllowedOrigins = getEnvString("ALLOWED_ORIGINS", "http://localhost:5173")
@@ -62,6 +69,12 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if cfg.Port, err = getEnvInt("PORT", 8080); err != nil {
+		return nil, err
+	}
+	if cfg.CPUProcessorTimeoutSeconds, err = getEnvInt("CPU_PROCESSOR_TIMEOUT_SECONDS", 30); err != nil {
+		return nil, err
+	}
+	if cfg.GPUProcessorTimeoutSeconds, err = getEnvInt("GPU_PROCESSOR_TIMEOUT_SECONDS", 180); err != nil {
 		return nil, err
 	}
 

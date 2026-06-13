@@ -301,6 +301,52 @@ func TestLoad_storageBackend_invalid(t *testing.T) {
 	}
 }
 
+func TestLoad_processorURLs_defaultToPythonProcessorURL(t *testing.T) {
+	t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
+	t.Setenv("PYTHON_PROCESSOR_URL", "http://py:9000")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CPUProcessorURL != "http://py:9000" {
+		t.Errorf("CPUProcessorURL: got %q, want %q", cfg.CPUProcessorURL, "http://py:9000")
+	}
+	if cfg.GPUProcessorURL != "http://py:9000" {
+		t.Errorf("GPUProcessorURL: got %q, want %q", cfg.GPUProcessorURL, "http://py:9000")
+	}
+}
+
+func TestLoad_processorURLs_overrideIndependently(t *testing.T) {
+	t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
+	t.Setenv("PYTHON_PROCESSOR_URL", "http://py:9000")
+	t.Setenv("CPU_PROCESSOR_URL", "http://cpu:8091")
+	t.Setenv("GPU_PROCESSOR_URL", "http://gpu:8092")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CPUProcessorURL != "http://cpu:8091" {
+		t.Errorf("CPUProcessorURL: got %q", cfg.CPUProcessorURL)
+	}
+	if cfg.GPUProcessorURL != "http://gpu:8092" {
+		t.Errorf("GPUProcessorURL: got %q", cfg.GPUProcessorURL)
+	}
+}
+
+func TestLoad_processorTimeouts_defaults(t *testing.T) {
+	t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CPUProcessorTimeoutSeconds != 30 {
+		t.Errorf("CPUProcessorTimeoutSeconds: got %d, want 30", cfg.CPUProcessorTimeoutSeconds)
+	}
+	if cfg.GPUProcessorTimeoutSeconds != 180 {
+		t.Errorf("GPUProcessorTimeoutSeconds: got %d, want 180", cfg.GPUProcessorTimeoutSeconds)
+	}
+}
+
 // TestLoad_ErrorCases is a table-driven test covering all validation failures.
 func TestLoad_ErrorCases(t *testing.T) {
 	validKey := strings.Repeat("a", 32)
