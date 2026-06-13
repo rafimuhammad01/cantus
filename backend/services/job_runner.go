@@ -89,9 +89,17 @@ func (r *JobRunner) Submit(videoID string, semitones int) string {
 // Run executes the four-stage pipeline synchronously. It is exported so tests can
 // drive it directly without goroutines.
 func (r *JobRunner) Run(ctx context.Context, jobID, videoID string, semitones int) {
+	// localDisk is used for filesystem path resolution within this same-host pipeline.
+	// Once Task 4 introduces cloud storage, this cast will be replaced with signed URLs.
+	localDisk, ok := r.storage.(*LocalDiskStorage)
+	if !ok {
+		r.fail(jobID, "storage backend does not support local filesystem paths")
+		return
+	}
+
 	// Stage 1: Download full audio.
 	r.update(jobID, models.StatusDownloading, "downloading full song")
-	has, err := r.storage.Has(ctx, videoID, "original.wav")
+	has, err := r.storage.Has(ctx, r.storage.Key(videoID, "original.wav"))
 	if err != nil {
 		r.fail(jobID, "storage check failed: "+err.Error())
 		return
@@ -105,14 +113,10 @@ func (r *JobRunner) Run(ctx context.Context, jobID, videoID string, semitones in
 
 	// Stage 2: Separate vocals from instrumental.
 	r.update(jobID, models.StatusSeparating, "separating vocals from instrumental")
-	vocalsHas, _ := r.storage.Has(ctx, videoID, "vocals.wav")
-	noVocalsHas, _ := r.storage.Has(ctx, videoID, "no_vocals.wav")
+	vocalsHas, _ := r.storage.Has(ctx, r.storage.Key(videoID, "vocals.wav"))
+	noVocalsHas, _ := r.storage.Has(ctx, r.storage.Key(videoID, "no_vocals.wav"))
 	if !vocalsHas || !noVocalsHas {
-		originalPath, err := r.storage.LocalPath(ctx, videoID, "original.wav")
-		if err != nil {
-			r.fail(jobID, "storage path failed: "+err.Error())
-			return
-		}
+		originalPath := localDisk.FilesystemPathForLocalProcessor(r.storage.Key(videoID, "original.wav"))
 		outputDir := filepath.Dir(originalPath)
 		if _, _, err := r.processor.Separate(ctx, originalPath, outputDir); err != nil {
 			r.fail(jobID, "separate failed: "+err.Error())
@@ -122,18 +126,10 @@ func (r *JobRunner) Run(ctx context.Context, jobID, videoID string, semitones in
 
 	// Stage 3: Extract melody from vocals stem.
 	r.update(jobID, models.StatusMelody, "extracting melody")
-	melodyHas, _ := r.storage.Has(ctx, videoID, "melody.json")
+	melodyHas, _ := r.storage.Has(ctx, r.storage.Key(videoID, "melody.json"))
 	if !melodyHas {
-		vocalsPath, err := r.storage.LocalPath(ctx, videoID, "vocals.wav")
-		if err != nil {
-			r.fail(jobID, "storage path failed: "+err.Error())
-			return
-		}
-		melodyPath, err := r.storage.LocalPath(ctx, videoID, "melody.json")
-		if err != nil {
-			r.fail(jobID, "storage path failed: "+err.Error())
-			return
-		}
+		vocalsPath := localDisk.FilesystemPathForLocalProcessor(r.storage.Key(videoID, "vocals.wav"))
+		melodyPath := localDisk.FilesystemPathForLocalProcessor(r.storage.Key(videoID, "melody.json"))
 		if err := r.processor.Melody(ctx, vocalsPath, melodyPath); err != nil {
 			r.fail(jobID, "melody failed: "+err.Error())
 			return
@@ -143,13 +139,9 @@ func (r *JobRunner) Run(ctx context.Context, jobID, videoID string, semitones in
 	// Stage 4: Pitch-shift the instrumental stem to the requested key.
 	r.update(jobID, models.StatusShifting, "shifting instrumental to your key")
 	shiftedName := "shifted/" + strconv.Itoa(semitones) + "/audio.mp3"
-	shiftedHas, _ := r.storage.Has(ctx, videoID, shiftedName)
+	shiftedHas, _ := r.storage.Has(ctx, r.storage.Key(videoID, shiftedName))
 	if !shiftedHas {
-		noVocalsPath, err := r.storage.LocalPath(ctx, videoID, "no_vocals.wav")
-		if err != nil {
-			r.fail(jobID, "storage path failed: "+err.Error())
-			return
-		}
+		noVocalsPath := localDisk.FilesystemPathForLocalProcessor(r.storage.Key(videoID, "no_vocals.wav"))
 
 		tmpDir, err := os.MkdirTemp("", "cantus-genshift-*")
 		if err != nil {
@@ -163,7 +155,7 @@ func (r *JobRunner) Run(ctx context.Context, jobID, videoID string, semitones in
 			r.fail(jobID, "shift failed: "+err.Error())
 			return
 		}
-		if err := r.storage.Commit(ctx, videoID, shiftedName, tmpOut); err != nil {
+		if err := r.storage.Commit(ctx, r.storage.Key(videoID, shiftedName), tmpOut); err != nil {
 			r.fail(jobID, "commit failed: "+err.Error())
 			return
 		}

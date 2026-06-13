@@ -258,17 +258,19 @@ func (f *fakeRunner) Run(_ context.Context, name string, args ...string) error {
 
 // fakeStorage is a test double for Storage that records Commit calls.
 type fakeStorage struct {
-	committed []struct{ videoID, name, localPath string }
+	committed []struct{ key, localPath string }
 	commitErr error
 }
 
-func (f *fakeStorage) LocalPath(_ context.Context, _, _ string) (string, error) { return "", nil }
-func (f *fakeStorage) Has(_ context.Context, _, _ string) (bool, error)         { return false, nil }
-func (f *fakeStorage) Open(_ context.Context, _, _ string) (io.ReadCloser, error) {
+func (f *fakeStorage) Key(videoID, name string) string                     { return videoID + "/" + name }
+func (f *fakeStorage) Has(_ context.Context, _ string) (bool, error)       { return false, nil }
+func (f *fakeStorage) SignGet(_ context.Context, _ string) (string, error) { return "", nil }
+func (f *fakeStorage) SignPut(_ context.Context, _ string) (string, error) { return "", nil }
+func (f *fakeStorage) Open(_ context.Context, _ string) (io.ReadCloser, error) {
 	return nil, nil
 }
-func (f *fakeStorage) Commit(_ context.Context, videoID, name, localPath string) error {
-	f.committed = append(f.committed, struct{ videoID, name, localPath string }{videoID, name, localPath})
+func (f *fakeStorage) Commit(_ context.Context, key, localPath string) error {
+	f.committed = append(f.committed, struct{ key, localPath string }{key, localPath})
 	return f.commitErr
 }
 
@@ -423,11 +425,9 @@ func TestPythonYouTubeService_DownloadPreview(t *testing.T) {
 			}
 			if tt.wantCommitCount > 0 && len(store.committed) > 0 {
 				c := store.committed[0]
-				if c.videoID != tt.videoID {
-					t.Errorf("Commit videoID: got %q, want %q", c.videoID, tt.videoID)
-				}
-				if c.name != "preview.mp3" {
-					t.Errorf("Commit name: got %q, want %q", c.name, "preview.mp3")
+				wantKey := tt.videoID + "/preview.mp3"
+				if c.key != wantKey {
+					t.Errorf("Commit key: got %q, want %q", c.key, wantKey)
 				}
 			}
 		})
@@ -619,11 +619,9 @@ func TestPythonYouTubeService_DownloadFull(t *testing.T) {
 			}
 			if tt.wantCommitCount > 0 && len(store.committed) > 0 {
 				c := store.committed[0]
-				if c.videoID != tt.videoID {
-					t.Errorf("Commit videoID: got %q, want %q", c.videoID, tt.videoID)
-				}
-				if c.name != "original.wav" {
-					t.Errorf("Commit name: got %q, want %q", c.name, "original.wav")
+				wantKey := tt.videoID + "/original.wav"
+				if c.key != wantKey {
+					t.Errorf("Commit key: got %q, want %q", c.key, wantKey)
 				}
 			}
 		})

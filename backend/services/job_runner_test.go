@@ -140,12 +140,8 @@ func waitForStatus(t *testing.T, store *services.JobStore, jobID string, wantSta
 // stageFiles is a helper to pre-stage a set of named cache files for a videoID.
 func stageFiles(t *testing.T, storage *services.LocalDiskStorage, videoID string, names ...string) {
 	t.Helper()
-	ctx := context.Background()
 	for _, name := range names {
-		p, err := storage.LocalPath(ctx, videoID, name)
-		if err != nil {
-			t.Fatalf("LocalPath(%q): %v", name, err)
-		}
+		p := storage.FilesystemPathForLocalProcessor(storage.Key(videoID, name))
 		if err := writeTestFile(p, "fake content"); err != nil {
 			t.Fatalf("writeTestFile(%q): %v", p, err)
 		}
@@ -327,10 +323,7 @@ func TestJobRunner_Run(t *testing.T) {
 			// DownloadFull side effect: write original.wav so Separate stage can find it.
 			if tt.downloadFullErr == nil && tt.writeSeparateFiles {
 				fakeYT.downloadFullFn = func(vid string) error {
-					p, err := storage.LocalPath(ctx, vid, "original.wav")
-					if err != nil {
-						return err
-					}
+					p := storage.FilesystemPathForLocalProcessor(storage.Key(vid, "original.wav"))
 					return writeTestFile(p, "fake original wav")
 				}
 			}
@@ -370,7 +363,7 @@ func TestJobRunner_Run(t *testing.T) {
 
 			// On success, verify shifted file is in cache.
 			if tt.wantStatus == models.StatusDone && tt.writeShiftFile {
-				has, err := storage.Has(ctx, videoID, "shifted/-2/audio.mp3")
+				has, err := storage.Has(ctx, storage.Key(videoID, "shifted/-2/audio.mp3"))
 				if err != nil {
 					t.Fatalf("storage.Has(shifted/-2/audio.mp3): %v", err)
 				}
@@ -399,12 +392,11 @@ func containsStr(s, substr string) bool {
 
 func TestJobRunner_Submit_RunsAsync(t *testing.T) {
 	storage, jobStore, fakeYT, fakeProc, runner := newTestSetup(t, 1)
-	ctx := context.Background()
 	const videoID = "dQw4w9WgXcQ"
 
 	// Wire side-effect fns so pipeline can complete.
 	fakeYT.downloadFullFn = func(vid string) error {
-		p, _ := storage.LocalPath(ctx, vid, "original.wav")
+		p := storage.FilesystemPathForLocalProcessor(storage.Key(vid, "original.wav"))
 		return writeTestFile(p, "fake original")
 	}
 	fakeProc.separateFn = func(in, outDir string) error {
@@ -468,8 +460,6 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewLocalDiskStorage: %v", err)
 		}
-		ctx := context.Background()
-
 		jobStore := services.NewJobStore(time.Hour)
 		fakeYT := &fakeYouTubeJob{}
 
@@ -485,7 +475,7 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		const videoID = "dedupvideo1"
 
 		fakeYT.downloadFullFn = func(vid string) error {
-			p, _ := storage.LocalPath(ctx, vid, "original.wav")
+			p := storage.FilesystemPathForLocalProcessor(storage.Key(vid, "original.wav"))
 			return writeTestFile(p, "orig")
 		}
 		fakeProc.separateFn = func(in, outDir string) error {
@@ -539,11 +529,10 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 	// ---------------------------------------------------------------------------
 	t.Run("post-completion submit returns new jobID", func(t *testing.T) {
 		storage, jobStore, fakeYT, fakeProc, runner := newTestSetup(t, 1)
-		ctx := context.Background()
 		const videoID = "dedupvideo2"
 
 		fakeYT.downloadFullFn = func(vid string) error {
-			p, _ := storage.LocalPath(ctx, vid, "original.wav")
+			p := storage.FilesystemPathForLocalProcessor(storage.Key(vid, "original.wav"))
 			return writeTestFile(p, "orig")
 		}
 		fakeProc.separateFn = func(in, outDir string) error {
@@ -581,12 +570,11 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 	// ---------------------------------------------------------------------------
 	t.Run("post-failure submit returns new jobID", func(t *testing.T) {
 		storage, jobStore, fakeYT, fakeProc, runner := newTestSetup(t, 1)
-		ctx := context.Background()
 		const videoID = "dedupvideo3"
 
 		// Wire download to succeed (writes original.wav) so we reach Separate.
 		fakeYT.downloadFullFn = func(vid string) error {
-			p, _ := storage.LocalPath(ctx, vid, "original.wav")
+			p := storage.FilesystemPathForLocalProcessor(storage.Key(vid, "original.wav"))
 			return writeTestFile(p, "orig")
 		}
 		// Separate returns an error to fail the pipeline.
@@ -635,7 +623,6 @@ func TestJobRunner_Submit_BoundedConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocalDiskStorage: %v", err)
 	}
-	ctx := context.Background()
 
 	jobStore := services.NewJobStore(time.Hour)
 	fakeYT := &fakeYouTubeJob{}
@@ -651,7 +638,7 @@ func TestJobRunner_Submit_BoundedConcurrency(t *testing.T) {
 
 	// Both jobs share fakeYT; downloadFullFn writes original.wav per videoID.
 	fakeYT.downloadFullFn = func(vid string) error {
-		p, _ := storage.LocalPath(ctx, vid, "original.wav")
+		p := storage.FilesystemPathForLocalProcessor(storage.Key(vid, "original.wav"))
 		return writeTestFile(p, "orig")
 	}
 	fakeProc.separateFn = func(in, outDir string) error {

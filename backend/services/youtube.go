@@ -167,7 +167,7 @@ func (s *PythonYouTubeService) DownloadPreview(ctx context.Context, videoID stri
 		return fmt.Errorf("download preview: yt-dlp: %w", err)
 	}
 
-	if err := s.storage.Commit(ctx, videoID, "preview.mp3", outPath); err != nil {
+	if err := s.storage.Commit(ctx, s.storage.Key(videoID, "preview.mp3"), outPath); err != nil {
 		return fmt.Errorf("download preview: commit: %w", err)
 	}
 
@@ -206,7 +206,7 @@ func (s *PythonYouTubeService) DownloadFull(ctx context.Context, videoID string)
 		return fmt.Errorf("download full: yt-dlp: %w", err)
 	}
 
-	if err := s.storage.Commit(ctx, videoID, "original.wav", outPath); err != nil {
+	if err := s.storage.Commit(ctx, s.storage.Key(videoID, "original.wav"), outPath); err != nil {
 		return fmt.Errorf("download full: commit: %w", err)
 	}
 
