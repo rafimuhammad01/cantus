@@ -82,6 +82,17 @@ func main() {
 
 	processor := services.NewPythonProcessorClient(cfg.PythonProcessorURL, &http.Client{Timeout: 5 * time.Minute})
 
+	cpuProc := services.NewPythonCPUProcessorClient(
+		cfg.CPUProcessorURL,
+		&http.Client{Timeout: time.Duration(cfg.CPUProcessorTimeoutSeconds) * time.Second},
+	)
+	gpuProc := services.NewPythonGPUProcessorClient(
+		cfg.GPUProcessorURL,
+		&http.Client{Timeout: time.Duration(cfg.GPUProcessorTimeoutSeconds) * time.Second},
+	)
+	_ = cpuProc
+	_ = gpuProc
+
 	jobStore := services.NewJobStore(1 * time.Hour)
 	jobStore.StartCleanup(ctx, 5*time.Minute)
 
