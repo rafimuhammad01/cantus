@@ -9,6 +9,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/rs/zerolog"
 
 	"cantus/backend/api"
 	"cantus/backend/logger"
@@ -30,7 +33,7 @@ func TestRouter_Health(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logger.New: %v", err)
 	}
-	router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil)
+	router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
@@ -60,7 +63,7 @@ func TestRouter_CORS_AllowedOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logger.New: %v", err)
 	}
-	router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil)
+	router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	req.Header.Set("Origin", "http://localhost:5173")
@@ -81,7 +84,7 @@ func TestRouter_CORS_DisallowedOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logger.New: %v", err)
 	}
-	router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil)
+	router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	req.Header.Set("Origin", "http://evil.com")
@@ -102,7 +105,7 @@ func TestRouter_CORS_Preflight(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logger.New: %v", err)
 	}
-	router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil)
+	router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodOptions, "/health", nil)
 	req.Header.Set("Origin", "http://localhost:5173")
@@ -140,7 +143,7 @@ func TestRouter_SetsRequestIDHeader(t *testing.T) {
 			if err != nil {
 				t.Fatalf("logger.New: %v", err)
 			}
-			router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil)
+			router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil, nil)
 
 			req := httptest.NewRequest(http.MethodGet, "/health", nil)
 			rec := httptest.NewRecorder()
@@ -170,7 +173,7 @@ func TestRouter_LogsRequest(t *testing.T) {
 			if err != nil {
 				t.Fatalf("logger.New: %v", err)
 			}
-			router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil)
+			router := api.NewRouter([]string{"http://localhost:5173"}, log, &fakeYouTubeService{}, nil, nil, nil, nil, nil, nil)
 
 			req := httptest.NewRequest(http.MethodGet, "/health", nil)
 			rec := httptest.NewRecorder()
@@ -216,6 +219,55 @@ func TestRouter_LogsRequest(t *testing.T) {
 
 			if !found {
 				t.Fatalf("no log entry with method=GET path=/health status=200 duration_ms request_id found.\nBuffer contents:\n%s", output)
+			}
+		})
+	}
+}
+
+// fakeRouterDeps returns minimal valid deps for NewRouter that don't trigger
+// any background work. Tests only exercise the mux-level routing decision.
+func fakeRouterDeps(t *testing.T) (*services.Signer, services.Storage, *services.JobStore) {
+	t.Helper()
+	signer, err := services.NewSigner(strings.Repeat("k", 32))
+	if err != nil {
+		t.Fatalf("NewSigner: %v", err)
+	}
+	storage, err := services.NewLocalDiskStorage(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalDiskStorage: %v", err)
+	}
+	// YouTubeService / ProcessorClient / JobSubmitter can be nil for
+	// these tests — we only hit /internal/blob.
+	return signer, storage, services.NewJobStore(1 * time.Hour)
+}
+
+func TestRouter_blobRoute_mountedOnlyWhenTokenerSet(t *testing.T) {
+	signer, storage, store := fakeRouterDeps(t)
+
+	cases := []struct {
+		name       string
+		tokener    *services.BlobTokener
+		wantStatus int // 404 if not mounted; 400 if mounted (missing exp param)
+	}{
+		{
+			name:       "nil tokener: route not mounted",
+			tokener:    nil,
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "non-nil tokener: route mounted",
+			tokener:    services.NewBlobTokener(signer),
+			wantStatus: http.StatusBadRequest, // exp param missing → handler responds 400
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := api.NewRouter([]string{"http://localhost:5173"}, zerolog.Nop(), nil, signer, storage, nil, nil, store, tc.tokener)
+			r := httptest.NewRequest(http.MethodGet, "/internal/blob/abc/x.json", nil)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, r)
+			if w.Code != tc.wantStatus {
+				t.Errorf("status = %d, want %d; body=%s", w.Code, tc.wantStatus, w.Body.String())
 			}
 		})
 	}

@@ -67,7 +67,8 @@ func main() {
 	maxJobs := cfg.MaxConcurrentJobs
 	jobRunner := services.NewJobRunner(svc, storage, processor, jobStore, maxJobs)
 
-	r := api.NewRouter(origins, log, svc, signer, storage, processor, jobRunner, jobStore)
+	blobTokener := services.NewBlobTokener(signer)
+	r := api.NewRouter(origins, log, svc, signer, storage, processor, jobRunner, jobStore, blobTokener)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
