@@ -3,6 +3,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,11 @@ import (
 	"path/filepath"
 	"time"
 )
+
+// ErrObjectNotMaterialized is returned by Verify when the object is absent
+// or zero-byte. Used after a Python upload to confirm the PUT actually
+// landed before treating the cache entry as ready.
+var ErrObjectNotMaterialized = errors.New("storage: object not materialized")
 
 // Storage abstracts cache read/write operations so handlers never touch file paths directly.
 // Keys are opaque strings produced by Key(videoID, name) — callers must not construct
@@ -23,6 +29,7 @@ type Storage interface {
 	SignPut(ctx context.Context, key string) (string, error)
 	Commit(ctx context.Context, key, localPath string) error
 	Open(ctx context.Context, key string) (io.ReadCloser, error)
+	Verify(ctx context.Context, key string) error
 }
 
 // LocalDiskStorage is a permanent, disk-backed Storage implementation.
@@ -143,6 +150,21 @@ func (s *LocalDiskStorage) Open(ctx context.Context, key string) (io.ReadCloser,
 		return nil, fmt.Errorf("storage: open %s: %w", key, err)
 	}
 	return f, nil
+}
+
+// Verify reports nil if the object exists with non-zero size, otherwise
+// ErrObjectNotMaterialized. Used after a Python upload completes (200 OK
+// from the processor) to catch the "service returned success but the PUT
+// silently failed" failure mode.
+func (s *LocalDiskStorage) Verify(ctx context.Context, key string) error {
+	ok, err := s.Has(ctx, key)
+	if err != nil {
+		return fmt.Errorf("storage: Verify %s: %w", key, err)
+	}
+	if !ok {
+		return fmt.Errorf("storage: %s: %w", key, ErrObjectNotMaterialized)
+	}
+	return nil
 }
 
 // FilesystemPathForLocalProcessor is a transitional escape hatch for code paths

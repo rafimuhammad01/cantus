@@ -368,6 +368,70 @@ func TestLocalDiskStorage_SignGet_emptyWhenNoBlobConfig(t *testing.T) {
 	}
 }
 
+func TestLocalDiskStorage_Verify(t *testing.T) {
+	s, err := services.NewLocalDiskStorage(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalDiskStorage: %v", err)
+	}
+	ctx := context.Background()
+
+	cases := []struct {
+		name      string
+		setup     func(t *testing.T, key string)
+		wantErrIs error
+	}{
+		{
+			name:      "missing object → ErrObjectNotMaterialized",
+			setup:     func(t *testing.T, key string) {},
+			wantErrIs: services.ErrObjectNotMaterialized,
+		},
+		{
+			name: "zero-byte object → ErrObjectNotMaterialized",
+			setup: func(t *testing.T, key string) {
+				t.Helper()
+				src := filepath.Join(t.TempDir(), "empty")
+				if err := os.WriteFile(src, []byte{}, 0o644); err != nil {
+					t.Fatalf("WriteFile: %v", err)
+				}
+				if err := s.Commit(ctx, key, src); err != nil {
+					t.Fatalf("Commit: %v", err)
+				}
+			},
+			wantErrIs: services.ErrObjectNotMaterialized,
+		},
+		{
+			name: "non-empty object → nil",
+			setup: func(t *testing.T, key string) {
+				t.Helper()
+				src := filepath.Join(t.TempDir(), "ok")
+				if err := os.WriteFile(src, []byte("payload"), 0o644); err != nil {
+					t.Fatalf("WriteFile: %v", err)
+				}
+				if err := s.Commit(ctx, key, src); err != nil {
+					t.Fatalf("Commit: %v", err)
+				}
+			},
+			wantErrIs: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			key := s.Key("abc12345678", "verify-"+tc.name+".bin")
+			tc.setup(t, key)
+			err := s.Verify(ctx, key)
+			if tc.wantErrIs == nil {
+				if err != nil {
+					t.Fatalf("Verify: got %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErrIs) {
+				t.Fatalf("Verify: got %v, want errors.Is(%v)", err, tc.wantErrIs)
+			}
+		})
+	}
+}
+
 func TestLocalDiskStorage_SignGetSignPut_returnsBlobURL(t *testing.T) {
 	signer, _ := services.NewSigner(strings.Repeat("k", 32))
 	bt := services.NewBlobTokener(signer)

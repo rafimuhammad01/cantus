@@ -39,6 +39,7 @@ func (f *fakeStorage) SignGet(_ context.Context, _ string) (string, error) { ret
 func (f *fakeStorage) SignPut(_ context.Context, _ string) (string, error) { return "", nil }
 
 func (f *fakeStorage) Commit(_ context.Context, _, _ string) error { return nil }
+func (f *fakeStorage) Verify(_ context.Context, _ string) error    { return nil }
 
 func (f *fakeStorage) Open(_ context.Context, _ string) (io.ReadCloser, error) {
 	if f.openErr != nil {

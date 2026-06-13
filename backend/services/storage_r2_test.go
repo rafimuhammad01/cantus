@@ -2,6 +2,7 @@ package services_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -217,6 +218,61 @@ func TestR2Storage_Commit_uploadsFile(t *testing.T) {
 
 // writeFileForR2Test creates a file at path with the given content.
 // Extracted so it can be called from both Commit test and any future tests.
+func TestR2Storage_Verify(t *testing.T) {
+	cases := []struct {
+		name      string
+		handler   http.HandlerFunc
+		wantErrIs error
+	}{
+		{
+			name: "non-empty HEAD 200 → nil",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Length", "42")
+				w.WriteHeader(http.StatusOK)
+			},
+			wantErrIs: nil,
+		},
+		{
+			name: "zero-size HEAD 200 → ErrObjectNotMaterialized",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Length", "0")
+				w.WriteHeader(http.StatusOK)
+			},
+			wantErrIs: services.ErrObjectNotMaterialized,
+		},
+		{
+			name: "HEAD 404 → ErrObjectNotMaterialized",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+			},
+			wantErrIs: services.ErrObjectNotMaterialized,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+			s, err := services.NewR2Storage(services.R2Config{
+				AccountID: "acct", AccessKeyID: "k", SecretAccessKey: "s",
+				Bucket: "cantus-cache", PresignTTL: time.Minute, Endpoint: srv.URL,
+			})
+			if err != nil {
+				t.Fatalf("NewR2Storage: %v", err)
+			}
+			err = s.Verify(context.Background(), "abc/melody.json")
+			if tc.wantErrIs == nil {
+				if err != nil {
+					t.Fatalf("Verify: got %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErrIs) {
+				t.Fatalf("Verify: got %v, want errors.Is(%v)", err, tc.wantErrIs)
+			}
+		})
+	}
+}
+
 func writeFileForR2Test(t *testing.T, filePath, content string) error {
 	t.Helper()
 	return writeFileBytes(filePath, []byte(content))

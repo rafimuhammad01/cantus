@@ -129,6 +129,19 @@ func (s *R2Storage) Commit(ctx context.Context, key, localPath string) error {
 	return nil
 }
 
+// Verify reports nil if the object exists with non-zero size, otherwise
+// ErrObjectNotMaterialized.
+func (s *R2Storage) Verify(ctx context.Context, key string) error {
+	ok, err := s.Has(ctx, key)
+	if err != nil {
+		return fmt.Errorf("storage(r2): Verify %s: %w", key, err)
+	}
+	if !ok {
+		return fmt.Errorf("storage(r2): %s: %w", key, ErrObjectNotMaterialized)
+	}
+	return nil
+}
+
 // Open returns a ReadCloser streaming the object body from R2.
 // Callers must close the returned reader.
 func (s *R2Storage) Open(ctx context.Context, key string) (io.ReadCloser, error) {

@@ -269,6 +269,7 @@ func (f *fakeStorage) SignPut(_ context.Context, _ string) (string, error) { ret
 func (f *fakeStorage) Open(_ context.Context, _ string) (io.ReadCloser, error) {
 	return nil, nil
 }
+func (f *fakeStorage) Verify(_ context.Context, _ string) error { return nil }
 func (f *fakeStorage) Commit(_ context.Context, key, localPath string) error {
 	f.committed = append(f.committed, struct{ key, localPath string }{key, localPath})
 	return f.commitErr
