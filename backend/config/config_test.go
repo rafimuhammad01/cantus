@@ -39,6 +39,18 @@ func TestLoad_HappyPath_WithDefaults(t *testing.T) {
 	if cfg.VideoIDSigningKey != strings.Repeat("a", 32) {
 		t.Errorf("VideoIDSigningKey: got %q, want %q", cfg.VideoIDSigningKey, strings.Repeat("a", 32))
 	}
+	if cfg.CPUProcessorURL != "http://localhost:8090" {
+		t.Errorf("CPUProcessorURL: got %q, want %q", cfg.CPUProcessorURL, "http://localhost:8090")
+	}
+	if cfg.GPUProcessorURL != "http://localhost:8090" {
+		t.Errorf("GPUProcessorURL: got %q, want %q", cfg.GPUProcessorURL, "http://localhost:8090")
+	}
+	if cfg.CPUProcessorTimeoutSeconds != 30 {
+		t.Errorf("CPUProcessorTimeoutSeconds: got %d, want %d", cfg.CPUProcessorTimeoutSeconds, 30)
+	}
+	if cfg.GPUProcessorTimeoutSeconds != 180 {
+		t.Errorf("GPUProcessorTimeoutSeconds: got %d, want %d", cfg.GPUProcessorTimeoutSeconds, 180)
+	}
 }
 
 // TestLoad_HappyPath_AllExplicit verifies that when every env var is set to a
@@ -53,6 +65,10 @@ func TestLoad_HappyPath_AllExplicit(t *testing.T) {
 	t.Setenv("MAX_CONCURRENT_JOBS", "5")
 	t.Setenv("ALLOWED_ORIGINS", "https://example.com")
 	t.Setenv("PORT", "9090")
+	t.Setenv("CPU_PROCESSOR_URL", "http://cpu:9991")
+	t.Setenv("GPU_PROCESSOR_URL", "http://gpu:9992")
+	t.Setenv("CPU_PROCESSOR_TIMEOUT_SECONDS", "45")
+	t.Setenv("GPU_PROCESSOR_TIMEOUT_SECONDS", "240")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -79,6 +95,18 @@ func TestLoad_HappyPath_AllExplicit(t *testing.T) {
 	}
 	if cfg.VideoIDSigningKey != signingKey {
 		t.Errorf("VideoIDSigningKey: got %q, want %q", cfg.VideoIDSigningKey, signingKey)
+	}
+	if cfg.CPUProcessorURL != "http://cpu:9991" {
+		t.Errorf("CPUProcessorURL: got %q, want %q", cfg.CPUProcessorURL, "http://cpu:9991")
+	}
+	if cfg.GPUProcessorURL != "http://gpu:9992" {
+		t.Errorf("GPUProcessorURL: got %q, want %q", cfg.GPUProcessorURL, "http://gpu:9992")
+	}
+	if cfg.CPUProcessorTimeoutSeconds != 45 {
+		t.Errorf("CPUProcessorTimeoutSeconds: got %d, want %d", cfg.CPUProcessorTimeoutSeconds, 45)
+	}
+	if cfg.GPUProcessorTimeoutSeconds != 240 {
+		t.Errorf("GPUProcessorTimeoutSeconds: got %d, want %d", cfg.GPUProcessorTimeoutSeconds, 240)
 	}
 }
 
@@ -301,49 +329,82 @@ func TestLoad_storageBackend_invalid(t *testing.T) {
 	}
 }
 
-func TestLoad_processorURLs_defaultToPythonProcessorURL(t *testing.T) {
-	t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
-	t.Setenv("PYTHON_PROCESSOR_URL", "http://py:9000")
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.CPUProcessorURL != "http://py:9000" {
-		t.Errorf("CPUProcessorURL: got %q, want %q", cfg.CPUProcessorURL, "http://py:9000")
-	}
-	if cfg.GPUProcessorURL != "http://py:9000" {
-		t.Errorf("GPUProcessorURL: got %q, want %q", cfg.GPUProcessorURL, "http://py:9000")
-	}
-}
+// TestLoad_processorConfig is a table-driven test covering CPU/GPU processor
+// URL and timeout configuration: defaults, fallback from PYTHON_PROCESSOR_URL,
+// and independent overrides.
+func TestLoad_processorConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
 
-func TestLoad_processorURLs_overrideIndependently(t *testing.T) {
-	t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
-	t.Setenv("PYTHON_PROCESSOR_URL", "http://py:9000")
-	t.Setenv("CPU_PROCESSOR_URL", "http://cpu:8091")
-	t.Setenv("GPU_PROCESSOR_URL", "http://gpu:8092")
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+		wantCPUURL     string
+		wantGPUURL     string
+		wantCPUTimeout int
+		wantGPUTimeout int
+	}{
+		{
+			name:           "CPU/GPU URLs default to PYTHON_PROCESSOR_URL when neither override set",
+			env:            map[string]string{"PYTHON_PROCESSOR_URL": "http://py:9000"},
+			wantCPUURL:     "http://py:9000",
+			wantGPUURL:     "http://py:9000",
+			wantCPUTimeout: 30,
+			wantGPUTimeout: 180,
+		},
+		{
+			name: "CPU and GPU URLs override independently",
+			env: map[string]string{
+				"PYTHON_PROCESSOR_URL": "http://py:9000",
+				"CPU_PROCESSOR_URL":    "http://cpu:8091",
+				"GPU_PROCESSOR_URL":    "http://gpu:8092",
+			},
+			wantCPUURL:     "http://cpu:8091",
+			wantGPUURL:     "http://gpu:8092",
+			wantCPUTimeout: 30,
+			wantGPUTimeout: 180,
+		},
+		{
+			name:           "timeouts default to 30 / 180 when env unset",
+			env:            map[string]string{},
+			wantCPUTimeout: 30,
+			wantGPUTimeout: 180,
+			wantCPUURL:     "http://localhost:8090",
+			wantGPUURL:     "http://localhost:8090",
+		},
+		{
+			name: "timeouts override independently",
+			env: map[string]string{
+				"CPU_PROCESSOR_TIMEOUT_SECONDS": "60",
+				"GPU_PROCESSOR_TIMEOUT_SECONDS": "240",
+			},
+			wantCPUTimeout: 60,
+			wantGPUTimeout: 240,
+			wantCPUURL:     "http://localhost:8090",
+			wantGPUURL:     "http://localhost:8090",
+		},
 	}
-	if cfg.CPUProcessorURL != "http://cpu:8091" {
-		t.Errorf("CPUProcessorURL: got %q", cfg.CPUProcessorURL)
-	}
-	if cfg.GPUProcessorURL != "http://gpu:8092" {
-		t.Errorf("GPUProcessorURL: got %q", cfg.GPUProcessorURL)
-	}
-}
-
-func TestLoad_processorTimeouts_defaults(t *testing.T) {
-	t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.CPUProcessorTimeoutSeconds != 30 {
-		t.Errorf("CPUProcessorTimeoutSeconds: got %d, want 30", cfg.CPUProcessorTimeoutSeconds)
-	}
-	if cfg.GPUProcessorTimeoutSeconds != 180 {
-		t.Errorf("GPUProcessorTimeoutSeconds: got %d, want 180", cfg.GPUProcessorTimeoutSeconds)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.CPUProcessorURL != tc.wantCPUURL {
+				t.Errorf("CPUProcessorURL: got %q, want %q", cfg.CPUProcessorURL, tc.wantCPUURL)
+			}
+			if cfg.GPUProcessorURL != tc.wantGPUURL {
+				t.Errorf("GPUProcessorURL: got %q, want %q", cfg.GPUProcessorURL, tc.wantGPUURL)
+			}
+			if cfg.CPUProcessorTimeoutSeconds != tc.wantCPUTimeout {
+				t.Errorf("CPUProcessorTimeoutSeconds: got %d, want %d", cfg.CPUProcessorTimeoutSeconds, tc.wantCPUTimeout)
+			}
+			if cfg.GPUProcessorTimeoutSeconds != tc.wantGPUTimeout {
+				t.Errorf("GPUProcessorTimeoutSeconds: got %d, want %d", cfg.GPUProcessorTimeoutSeconds, tc.wantGPUTimeout)
+			}
+		})
 	}
 }
 
@@ -392,6 +453,22 @@ func TestLoad_ErrorCases(t *testing.T) {
 				t.Setenv("MAX_CONCURRENT_JOBS", "zero")
 			},
 			wantErrSub: "MAX_CONCURRENT_JOBS",
+		},
+		{
+			name: "invalid CPU_PROCESSOR_TIMEOUT_SECONDS",
+			setup: func(t *testing.T) {
+				t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
+				t.Setenv("CPU_PROCESSOR_TIMEOUT_SECONDS", "notanumber")
+			},
+			wantErrSub: "CPU_PROCESSOR_TIMEOUT_SECONDS",
+		},
+		{
+			name: "invalid GPU_PROCESSOR_TIMEOUT_SECONDS",
+			setup: func(t *testing.T) {
+				t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
+				t.Setenv("GPU_PROCESSOR_TIMEOUT_SECONDS", "notanumber")
+			},
+			wantErrSub: "GPU_PROCESSOR_TIMEOUT_SECONDS",
 		},
 	}
 
