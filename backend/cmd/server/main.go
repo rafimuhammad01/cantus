@@ -36,9 +36,30 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to create signer")
 	}
 
-	storage, err := services.NewLocalDiskStorage(cfg.CacheDir)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create storage")
+	var storage services.Storage
+	var blobTokener *services.BlobTokener
+	switch cfg.StorageBackend {
+	case "local":
+		blobTokener = services.NewBlobTokener(signer)
+		s, err := services.NewLocalDiskStorageWithBlob(cfg.CacheDir, cfg.BlobBaseURL, blobTokener, 10*time.Minute)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to create local storage")
+		}
+		storage = s
+	case "r2":
+		s, err := services.NewR2Storage(services.R2Config{
+			AccountID:       cfg.R2AccountID,
+			AccessKeyID:     cfg.R2AccessKeyID,
+			SecretAccessKey: cfg.R2SecretAccessKey,
+			Bucket:          cfg.R2Bucket,
+			PresignTTL:      time.Duration(cfg.R2PresignTTLSeconds) * time.Second,
+		})
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to create r2 storage")
+		}
+		storage = s
+	default:
+		log.Fatal().Str("backend", cfg.StorageBackend).Msg("unknown STORAGE_BACKEND")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -67,7 +88,6 @@ func main() {
 	maxJobs := cfg.MaxConcurrentJobs
 	jobRunner := services.NewJobRunner(svc, storage, processor, jobStore, maxJobs)
 
-	blobTokener := services.NewBlobTokener(signer)
 	r := api.NewRouter(origins, log, svc, signer, storage, processor, jobRunner, jobStore, blobTokener)
 
 	srv := &http.Server{
