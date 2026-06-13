@@ -32,7 +32,7 @@ function onClick() {
     />
     <div class="min-w-0 flex-1">
       <div
-        class="font-serif text-[17px] text-[var(--color-text)] truncate group-hover:underline decoration-[var(--color-accent)] decoration-1 underline-offset-4"
+        class="text-[15px] font-medium text-[var(--color-text)] truncate group-hover:underline decoration-[var(--color-accent)] decoration-1 underline-offset-4"
       >
         {{ result.title }}
       </div>

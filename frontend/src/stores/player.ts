@@ -212,6 +212,22 @@ export const usePlayerStore = defineStore("player", () => {
     }
   }
 
+  /**
+   * Fetch the full melody if the server has it cached (i.e. /api/generate has
+   * already run for this song). Silently no-ops on 404 so PreviewView can call
+   * it unconditionally — used to gate the displayed vocal range and key on
+   * full-song availability without requiring the user to re-generate.
+   */
+  async function loadFullMelodyIfAvailable(): Promise<void> {
+    if (!videoId.value || !sig.value) return;
+    if (melody.value !== null) return;
+    try {
+      melody.value = await getMelody(videoId.value, sig.value, semitones.value);
+    } catch {
+      // 404 = not generated yet. Non-fatal; UI hides range/key.
+    }
+  }
+
   /** Kick off /api/generate. Caller drives the SSE via useSSE. */
   async function startGenerate(): Promise<string> {
     const resp = await apiGenerate(videoId.value, sig.value, semitones.value);
@@ -261,6 +277,7 @@ export const usePlayerStore = defineStore("player", () => {
     setVocalOctaveShift,
     loadPreviewKey,
     loadPreviewStems,
+    loadFullMelodyIfAvailable,
     startGenerate,
     applyStatus,
     onGenerateDone,

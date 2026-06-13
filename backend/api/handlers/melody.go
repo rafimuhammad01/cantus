@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -41,29 +40,6 @@ func transposeKey(key string, semitones int) string {
 	}
 	newIdx := ((idx+semitones)%12 + 12) % 12
 	return noteNames[newIdx] + " " + parts[1]
-}
-
-// loadPreviewKey returns the cached preview-key value for videoID, or "" if absent or malformed.
-func loadPreviewKey(ctx context.Context, storage services.Storage, videoID string) string {
-	ok, err := storage.Has(ctx, videoID, "preview-key.json")
-	if err != nil || !ok {
-		return ""
-	}
-	path, err := storage.LocalPath(ctx, videoID, "preview-key.json")
-	if err != nil {
-		return ""
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var pk struct {
-		Key string `json:"key"`
-	}
-	if err := json.Unmarshal(data, &pk); err != nil {
-		return ""
-	}
-	return pk.Key
 }
 
 // melodyJSON is the on-disk and on-wire shape of a melody payload.
@@ -138,17 +114,12 @@ func Melody(signer *services.Signer, storage services.Storage) http.HandlerFunc 
 			return
 		}
 
-		// Override key with preview-key.json when present so the UI shows the
-		// same key in both /preview and /play views. The preview-key detector
-		// (chroma on full mix) and the melody detector (Krumhansl on isolated
-		// vocals) can disagree on enharmonic equivalents (e.g. F major vs A minor);
-		// preview computes first and the user sees it first, so it wins.
-		key := payload.Key
-		if previewKey := loadPreviewKey(ctx, storage, videoID); previewKey != "" {
-			key = previewKey
-		}
-
-		writeJSON(w, http.StatusOK, transposeMelody(payload, semitones, key))
+		// PlayView uses melody.key directly — CREPE on the full isolated vocals
+		// stem is the most accurate detector we have. Chroma on the polyphonic
+		// full mix was tried as an override here but produced relative-minor /
+		// IV-of confusion (e.g. Dm vs F major, D vs A major) and broke results
+		// that CREPE-on-vocals had right. Don't override.
+		writeJSON(w, http.StatusOK, transposeMelody(payload, semitones, payload.Key))
 	}
 }
 

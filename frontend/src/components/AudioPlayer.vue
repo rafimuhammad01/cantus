@@ -71,7 +71,7 @@ defineExpose({ audio });
   <div
     :class="
       isBottomBar
-        ? 'fixed bottom-0 inset-x-0 z-20 bg-[var(--color-surface)]/95 backdrop-blur border-t border-[var(--color-border)] px-4 py-3'
+        ? 'fixed bottom-0 inset-x-0 z-20 bg-[var(--color-surface)]/95 backdrop-blur border-t border-[var(--color-border)] px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]'
         : 'w-full'
     "
   >

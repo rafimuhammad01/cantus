@@ -5,7 +5,7 @@ import { usePlayerStore } from "@/stores/player";
 import { useSSE } from "@/composables/useSSE";
 import { statusURL, audioURL, getMelody } from "@/services/api";
 import { shortKey, transposeKey } from "@/utils/key";
-import { midiToNoteName } from "@/utils/pitch";
+import { midiToNoteName, hzToMidi } from "@/utils/pitch";
 import KeySelector from "@/components/KeySelector.vue";
 import VocalOctaveSelector from "@/components/VocalOctaveSelector.vue";
 import AudioPlayer from "@/components/AudioPlayer.vue";
@@ -36,6 +36,24 @@ const noContext = computed(
 );
 
 const isDone = computed(() => player.jobStatus === "done");
+
+// Voice range comes only from the full melody. player.vocalRange falls back to
+// the 30s previewMelody when the full melody isn't loaded, which would leak
+// the preview-clip range into PlayView while a generate is still running.
+const fullVocalRange = computed<{ minMidi: number; maxMidi: number } | null>(
+  () => {
+    if (!player.melody) return null;
+    const voiced = player.melody.frames
+      .filter(([, hz]) => hz > 0)
+      .map(([, hz]) => hzToMidi(hz));
+    if (voiced.length === 0) return null;
+    const shift = player.vocalOctaveShift;
+    return {
+      minMidi: Math.round(Math.min(...voiced) + shift),
+      maxMidi: Math.round(Math.max(...voiced) + shift),
+    };
+  },
+);
 
 const fullAudioSrc = computed(() =>
   player.videoId && player.sig
@@ -152,13 +170,13 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen pb-28">
+  <div class="h-[100svh] flex flex-col">
     <template v-if="!noContext">
       <!-- Slim top bar -->
       <header
-        class="sticky top-0 z-10 bg-[var(--color-surface)]/95 backdrop-blur border-b border-[var(--color-border)]"
+        class="shrink-0 bg-[var(--color-surface)]/95 backdrop-blur border-b border-[var(--color-border)]"
       >
-        <div class="max-w-6xl mx-auto px-4 h-16 flex items-center gap-3">
+        <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
           <button
             @click="router.push(`/preview/${routeVideoId}`)"
             class="text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0"
@@ -174,7 +192,7 @@ onUnmounted(() => {
           />
           <div class="min-w-0 flex-1">
             <div
-              class="font-serif text-[16px] leading-tight truncate text-[var(--color-text)]"
+              class="text-[15px] font-medium leading-tight truncate text-[var(--color-text)]"
             >
               {{ player.song?.title }}
             </div>
@@ -185,7 +203,7 @@ onUnmounted(() => {
               >
             </div>
           </div>
-          <div class="hidden md:flex items-center gap-4 shrink-0">
+          <div class="hidden md:flex items-end gap-6 shrink-0">
             <KeySelector
               :semitones="pendingSemitones"
               :original-key="
@@ -214,7 +232,7 @@ onUnmounted(() => {
 
       <!-- Mobile control row (below the slim top bar) -->
       <div
-        class="md:hidden max-w-6xl mx-auto px-4 py-4 flex flex-wrap items-end justify-center gap-4"
+        class="md:hidden shrink-0 max-w-6xl mx-auto px-4 py-4 flex flex-wrap items-end justify-center gap-4"
       >
         <KeySelector
           :semitones="pendingSemitones"
@@ -232,8 +250,8 @@ onUnmounted(() => {
           :current="player.vocalOctaveShift"
           :disabled="player.jobStatus !== 'done'"
           :range="
-            player.vocalRange
-              ? `${midiToNoteName(player.vocalRange.minMidi)} – ${midiToNoteName(player.vocalRange.maxMidi)}`
+            fullVocalRange
+              ? `${midiToNoteName(fullVocalRange.minMidi)} – ${midiToNoteName(fullVocalRange.maxMidi)}`
               : undefined
           "
           @change="player.setVocalOctaveShift"
@@ -241,7 +259,9 @@ onUnmounted(() => {
       </div>
 
       <!-- Main hero area -->
-      <main class="max-w-6xl mx-auto px-4 py-6">
+      <main
+        class="flex-1 min-h-0 w-full max-w-6xl mx-auto px-4 pt-8 pb-24 flex flex-col"
+      >
         <div v-if="!isDone" class="py-12">
           <ProcessingStatus
             :status="player.jobStatus"
@@ -255,6 +275,8 @@ onUnmounted(() => {
           :audio-el="audioPlayerRef.audio!"
           :melody="player.melody"
           :vocal-octave-shift="player.vocalOctaveShift"
+          fill
+          class="flex-1 min-h-0"
         />
       </main>
 

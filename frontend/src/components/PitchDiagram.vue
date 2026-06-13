@@ -9,16 +9,20 @@ import { usePitchStore } from "@/stores/pitch";
 import { hzToMidi, midiToNoteName } from "@/utils/pitch";
 import type { MelodyResponse } from "@/services/api";
 
-const props = defineProps<{
-  audioEl: HTMLAudioElement;
-  melody: MelodyResponse;
-  vocalOctaveShift?: number; // default 0; offsets target MIDI at setup time
-}>();
+const props = withDefaults(
+  defineProps<{
+    audioEl: HTMLAudioElement;
+    melody: MelodyResponse;
+    vocalOctaveShift?: number; // default 0; offsets target MIDI at setup time
+    fill?: boolean; // when true the diagram fills its parent container vertically
+  }>(),
+  { fill: false },
+);
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const WINDOW_SECONDS = 10;
-const SVG_HEIGHT = 320;
+const SVG_HEIGHT = ref(320);
 const Y_AXIS_WIDTH = 44;
 const TOP_PAD = 8;
 const BOTTOM_PAD = 8;
@@ -106,7 +110,7 @@ const yMax = ref<number>(
   voicedMidis.length === 0 ? 72 : Math.ceil(Math.max(...voicedMidis)) + 1,
 );
 
-const MIN_Y_SPAN = 18;
+const MIN_Y_SPAN = 24;
 const LERP_RATE = 0.03;
 const SNAP_THRESHOLD = 0.1;
 
@@ -174,6 +178,7 @@ function interpolateTargetMidi(t: number): number | null {
 const pitchDetection = usePitchDetectionSPICE();
 const pitchStore = usePitchStore();
 const svgEl = ref<SVGSVGElement | null>(null);
+const svgWrapEl = ref<HTMLDivElement | null>(null);
 const svgWidth = ref(600);
 const now = ref(0);
 const showHeadphonesTip = ref(false);
@@ -190,7 +195,7 @@ function xScale(t: number): number {
 }
 
 function yScale(midi: number): number {
-  const drawH = SVG_HEIGHT - TOP_PAD - BOTTOM_PAD;
+  const drawH = SVG_HEIGHT.value - TOP_PAD - BOTTOM_PAD;
   return (
     TOP_PAD + drawH * (1 - (midi - yMin.value) / (yMax.value - yMin.value))
   );
@@ -413,13 +418,30 @@ onMounted(() => {
   props.audioEl.addEventListener("ended", onEnded);
   rafId = requestAnimationFrame(tick);
 
-  if (svgEl.value) {
+  const observeTarget = props.fill ? svgWrapEl.value : svgEl.value;
+  if (observeTarget) {
     resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (entry) svgWidth.value = entry.contentRect.width || 600;
+      if (!entry) return;
+      svgWidth.value = entry.contentRect.width || 600;
+      if (props.fill) {
+        SVG_HEIGHT.value = Math.max(240, Math.floor(entry.contentRect.height));
+      }
     });
-    resizeObserver.observe(svgEl.value);
-    svgWidth.value = svgEl.value.getBoundingClientRect().width || 600;
+    resizeObserver.observe(observeTarget);
+    const rect = observeTarget.getBoundingClientRect();
+    svgWidth.value = rect.width || 600;
+    if (props.fill) {
+      SVG_HEIGHT.value = Math.max(240, Math.floor(rect.height));
+    }
+  }
+
+  // Voice/key changes remount this component while audio keeps playing in the
+  // parent. Re-arm the mic so the user doesn't have to hit Play & Sing again.
+  if (!props.audioEl.paused) {
+    void pitchDetection.start().then(() => {
+      if (!pitchDetection.error.value) pitchStore.setActive(true);
+    });
   }
 });
 
@@ -436,6 +458,7 @@ onBeforeUnmount(() => {
 <template>
   <div
     class="rounded-2xl p-4 bg-[var(--color-surface)] border border-[var(--color-border)]"
+    :class="props.fill ? 'flex flex-col h-full' : ''"
   >
     <div class="flex items-center justify-between mb-3">
       <button
@@ -484,153 +507,156 @@ onBeforeUnmount(() => {
       Use headphones to keep the mic from picking up the backing track.
     </div>
 
-    <svg
-      ref="svgEl"
-      :height="SVG_HEIGHT"
-      :width="svgWidth"
-      class="block w-full"
-    >
-      <!-- Y-axis labels -->
-      <text
-        v-for="tick in yTicks"
-        :key="tick"
-        :x="4"
-        :y="yScale(tick) + 4"
-        fill="#a8a8a0"
-        font-size="10"
-        font-family="Fraunces, serif"
-        font-style="italic"
+    <div ref="svgWrapEl" :class="props.fill ? 'flex-1 min-h-0' : ''">
+      <svg
+        ref="svgEl"
+        :height="SVG_HEIGHT"
+        :width="svgWidth"
+        class="block w-full"
       >
-        {{ midiToNoteName(tick) }}
-      </text>
+        <!-- Y-axis labels -->
+        <text
+          v-for="tick in yTicks"
+          :key="tick"
+          :x="4"
+          :y="yScale(tick) + 4"
+          fill="#a8a8a0"
+          font-size="10"
+          font-family="Fraunces, serif"
+          font-style="italic"
+        >
+          {{ midiToNoteName(tick) }}
+        </text>
 
-      <!-- Horizontal grid lines -->
-      <line
-        v-for="tick in yTicks"
-        :key="`g-${tick}`"
-        :x1="Y_AXIS_WIDTH"
-        :x2="svgWidth"
-        :y1="yScale(tick)"
-        :y2="yScale(tick)"
-        stroke="#24242a"
-        stroke-dasharray="2,2"
-      />
+        <!-- Horizontal grid lines -->
+        <line
+          v-for="tick in yTicks"
+          :key="`g-${tick}`"
+          :x1="Y_AXIS_WIDTH"
+          :x2="svgWidth"
+          :y1="yScale(tick)"
+          :y2="yScale(tick)"
+          stroke="#24242a"
+          stroke-dasharray="2,2"
+        />
 
-      <!-- Pitch level bar (vertical, fills bottom→current pitch) -->
-      <rect
-        :x="PITCH_BAR_X"
-        :width="PITCH_BAR_WIDTH"
-        :y="yScale(yMax)"
-        :height="yScale(yMin) - yScale(yMax)"
-        fill="#24242a"
-        rx="2"
-      />
-      <rect
-        v-if="
-          pitchDetection.currentMidi.value !== null &&
-          isFinite(pitchDetection.currentMidi.value)
-        "
-        :x="PITCH_BAR_X"
-        :width="PITCH_BAR_WIDTH"
-        :y="yScale(pitchDetection.currentMidi.value)"
-        :height="
-          Math.max(0, yScale(yMin) - yScale(pitchDetection.currentMidi.value))
-        "
-        fill="#e8a87c"
-        opacity="0.85"
-        rx="2"
-      />
+        <!-- Pitch level bar (vertical, fills bottom→current pitch) -->
+        <rect
+          :x="PITCH_BAR_X"
+          :width="PITCH_BAR_WIDTH"
+          :y="yScale(yMax)"
+          :height="yScale(yMin) - yScale(yMax)"
+          fill="#24242a"
+          rx="2"
+        />
+        <rect
+          v-if="
+            pitchDetection.currentMidi.value !== null &&
+            isFinite(pitchDetection.currentMidi.value)
+          "
+          :x="PITCH_BAR_X"
+          :width="PITCH_BAR_WIDTH"
+          :y="yScale(pitchDetection.currentMidi.value)"
+          :height="
+            Math.max(0, yScale(yMin) - yScale(pitchDetection.currentMidi.value))
+          "
+          fill="#e8a87c"
+          opacity="0.85"
+          rx="2"
+        />
 
-      <!-- Target melody: past (blue) -->
-      <polyline
-        v-for="(seg, i) in targetSegmentsPast"
-        :key="`tp-${i}`"
-        :points="seg"
-        fill="none"
-        stroke="#e8a87c"
-        stroke-width="3"
-        stroke-linejoin="round"
-      />
+        <!-- Target melody: past (bright cream — the "song" line) -->
+        <polyline
+          v-for="(seg, i) in targetSegmentsPast"
+          :key="`tp-${i}`"
+          :points="seg"
+          fill="none"
+          stroke="#fafaf7"
+          stroke-opacity="0.85"
+          stroke-width="3"
+          stroke-linejoin="round"
+        />
 
-      <!-- Target melody: future (gray, dimmed) -->
-      <polyline
-        v-for="(seg, i) in targetSegmentsFuture"
-        :key="`tf-${i}`"
-        :points="seg"
-        fill="none"
-        stroke="#fafaf7"
-        stroke-opacity="0.35"
-        stroke-width="2.5"
-        stroke-linejoin="round"
-      />
+        <!-- Target melody: future (dim cream) -->
+        <polyline
+          v-for="(seg, i) in targetSegmentsFuture"
+          :key="`tf-${i}`"
+          :points="seg"
+          fill="none"
+          stroke="#fafaf7"
+          stroke-opacity="0.28"
+          stroke-width="2.5"
+          stroke-linejoin="round"
+        />
 
-      <!-- User pitch: color-coded segments -->
-      <line
-        v-for="(s, i) in userSegments"
-        :key="`u-${i}`"
-        :x1="s.x1"
-        :y1="s.y1"
-        :x2="s.x2"
-        :y2="s.y2"
-        :stroke="s.color"
-        stroke-width="3"
-        stroke-linecap="round"
-      />
+        <!-- User pitch: color-coded segments -->
+        <line
+          v-for="(s, i) in userSegments"
+          :key="`u-${i}`"
+          :x1="s.x1"
+          :y1="s.y1"
+          :x2="s.x2"
+          :y2="s.y2"
+          :stroke="s.color"
+          stroke-width="3"
+          stroke-linecap="round"
+        />
 
-      <!-- Red cursor at current time -->
-      <line
-        :x1="xScale(now)"
-        :x2="xScale(now)"
-        :y1="0"
-        :y2="SVG_HEIGHT"
-        stroke="#fafaf7"
-        stroke-opacity="0.4"
-        stroke-width="1.5"
-      />
+        <!-- Red cursor at current time -->
+        <line
+          :x1="xScale(now)"
+          :x2="xScale(now)"
+          :y1="0"
+          :y2="SVG_HEIGHT"
+          stroke="#fafaf7"
+          stroke-opacity="0.4"
+          stroke-width="1.5"
+        />
 
-      <!-- Edge arrow: shown when user pitch is outside the visible Y range -->
-      <template
-        v-if="
-          pitchDetection.currentMidi.value !== null &&
-          isFinite(pitchDetection.currentMidi.value)
-        "
-      >
-        <!-- Above yMax: chevron at top-right pointing up -->
-        <template v-if="pitchDetection.currentMidi.value > yMax">
-          <polygon
-            :points="`${svgWidth - 28},${TOP_PAD + 14} ${svgWidth - 20},${TOP_PAD + 2} ${svgWidth - 12},${TOP_PAD + 14}`"
-            fill="#e8a87c"
-          />
-          <text
-            :x="svgWidth - 20"
-            :y="TOP_PAD + 28"
-            text-anchor="middle"
-            fill="#e8a87c"
-            font-size="10"
-            font-family="monospace"
-          >
-            +{{ Math.round(pitchDetection.currentMidi.value - yMax) }}st
-          </text>
+        <!-- Edge arrow: shown when user pitch is outside the visible Y range -->
+        <template
+          v-if="
+            pitchDetection.currentMidi.value !== null &&
+            isFinite(pitchDetection.currentMidi.value)
+          "
+        >
+          <!-- Above yMax: chevron at top-right pointing up -->
+          <template v-if="pitchDetection.currentMidi.value > yMax">
+            <polygon
+              :points="`${svgWidth - 28},${TOP_PAD + 14} ${svgWidth - 20},${TOP_PAD + 2} ${svgWidth - 12},${TOP_PAD + 14}`"
+              fill="#e8a87c"
+            />
+            <text
+              :x="svgWidth - 20"
+              :y="TOP_PAD + 28"
+              text-anchor="middle"
+              fill="#e8a87c"
+              font-size="10"
+              font-family="monospace"
+            >
+              +{{ Math.round(pitchDetection.currentMidi.value - yMax) }}st
+            </text>
+          </template>
+
+          <!-- Below yMin: chevron at bottom-right pointing down -->
+          <template v-else-if="pitchDetection.currentMidi.value < yMin">
+            <polygon
+              :points="`${svgWidth - 28},${SVG_HEIGHT - BOTTOM_PAD - 14} ${svgWidth - 20},${SVG_HEIGHT - BOTTOM_PAD - 2} ${svgWidth - 12},${SVG_HEIGHT - BOTTOM_PAD - 14}`"
+              fill="#e8a87c"
+            />
+            <text
+              :x="svgWidth - 20"
+              :y="SVG_HEIGHT - BOTTOM_PAD - 18"
+              text-anchor="middle"
+              fill="#e8a87c"
+              font-size="10"
+              font-family="monospace"
+            >
+              -{{ Math.round(yMin - pitchDetection.currentMidi.value) }}st
+            </text>
+          </template>
         </template>
-
-        <!-- Below yMin: chevron at bottom-right pointing down -->
-        <template v-else-if="pitchDetection.currentMidi.value < yMin">
-          <polygon
-            :points="`${svgWidth - 28},${SVG_HEIGHT - BOTTOM_PAD - 14} ${svgWidth - 20},${SVG_HEIGHT - BOTTOM_PAD - 2} ${svgWidth - 12},${SVG_HEIGHT - BOTTOM_PAD - 14}`"
-            fill="#e8a87c"
-          />
-          <text
-            :x="svgWidth - 20"
-            :y="SVG_HEIGHT - BOTTOM_PAD - 18"
-            text-anchor="middle"
-            fill="#e8a87c"
-            font-size="10"
-            font-family="monospace"
-          >
-            -{{ Math.round(yMin - pitchDetection.currentMidi.value) }}st
-          </text>
-        </template>
-      </template>
-    </svg>
+      </svg>
+    </div>
   </div>
 </template>

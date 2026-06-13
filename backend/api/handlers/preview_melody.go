@@ -79,14 +79,11 @@ func PreviewMelody(signer *services.Signer, storage services.Storage) http.Handl
 			return
 		}
 
-		// Apply the same key-override rule as Melody(): preview-key.json (chroma on
-		// full mix) wins over the CREPE key embedded in melody.json when present and
-		// non-empty, so both views show a consistent key to the user.
-		key := payload.Key
-		if previewKey := loadPreviewKey(ctx, storage, videoID); previewKey != "" {
-			key = previewKey
-		}
-
-		writeJSON(w, http.StatusOK, transposeMelody(payload, semitones, key))
+		// Use melody.json key as-is — chroma-on-full-mix in preview-key.json was
+		// previously overlaid here for cross-view consistency but produced
+		// relative-minor / IV-of confusion that broke results CREPE-on-vocals
+		// had right. PreviewView hides the key label when preview-key is empty
+		// (see PreviewView's displayKey), so consistency is enforced upstream now.
+		writeJSON(w, http.StatusOK, transposeMelody(payload, semitones, payload.Key))
 	}
 }

@@ -173,22 +173,23 @@ func TestPreviewMelodyHandler(t *testing.T) {
 			},
 		},
 		{
-			name: "200 preview-key.json present — key overrides melody.json key",
+			name: "200 preview-key.json present does NOT override melody.json key",
 			url:  "/api/preview-melody/" + validID + "/0?sig=" + validSig,
 			setup: func(t *testing.T, st *services.LocalDiskStorage) {
-				// melody.json says "A major"; preview-key.json says "F major" — must win.
+				// melody.json says "A major" (testPreviewMelodyPayload); preview-key.json
+				// disagrees with "F major". melody.json must win — chroma-on-full-mix is
+				// prone to relative-minor / IV-of confusion and is unsafe as an override.
 				stagePreviewMelodyJSON(t, st, validID, testPreviewMelodyPayload)
 				stagePreviewKeyJSON(t, st, validID, "F major")
 			},
 			wantStatus: http.StatusOK,
 			checkBody: func(t *testing.T, got melodyResponse) {
 				t.Helper()
-				if got.Key != "F major" {
-					t.Errorf("key: got %q, want %q (preview-key should override)", got.Key, "F major")
+				if got.Key != "A major" {
+					t.Errorf("key: got %q, want %q (melody.json must win)", got.Key, "A major")
 				}
-				// semitones=0, so transposed_key == key
-				if got.TransposedKey != "F major" {
-					t.Errorf("transposed_key: got %q, want %q", got.TransposedKey, "F major")
+				if got.TransposedKey != "A major" {
+					t.Errorf("transposed_key: got %q, want %q", got.TransposedKey, "A major")
 				}
 			},
 		},

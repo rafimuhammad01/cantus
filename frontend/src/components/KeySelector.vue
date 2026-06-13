@@ -7,6 +7,7 @@ const props = defineProps<{
   disabled?: boolean;
   originalKey?: string;
   transposedKey?: string;
+  compact?: boolean;
 }>();
 const emit = defineEmits<{ change: [value: number] }>();
 
@@ -36,33 +37,39 @@ function inc() {
 <template>
   <div class="flex flex-col items-center gap-1.5">
     <div
-      class="inline-flex items-center gap-3 px-2 py-1.5 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)]"
+      v-if="!props.compact"
+      class="text-[11px] uppercase tracking-[0.16em] text-[var(--color-text-faint)]"
+    >
+      Key
+    </div>
+    <div
+      class="inline-flex items-center rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] p-1"
     >
       <button
         @click="dec"
         :disabled="!canDec"
-        class="w-9 h-9 rounded-full flex items-center justify-center text-[var(--color-text)] text-lg hover:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-faint)] disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+        class="w-8 h-8 rounded-full flex items-center justify-center text-[var(--color-text)] text-base hover:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-faint)] disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
         aria-label="Lower one step"
       >
         −
       </button>
       <div
-        class="min-w-[10.5rem] text-center text-[15px] font-medium text-[var(--color-text)] select-none"
+        class="min-w-[9rem] px-2 text-center text-[13px] font-medium text-[var(--color-text)] select-none"
       >
         {{ primaryLabel }}
       </div>
       <button
         @click="inc"
         :disabled="!canInc"
-        class="w-9 h-9 rounded-full flex items-center justify-center text-[var(--color-text)] text-lg hover:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-faint)] disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
+        class="w-8 h-8 rounded-full flex items-center justify-center text-[var(--color-text)] text-base hover:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-faint)] disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
         aria-label="Higher one step"
       >
         +
       </button>
     </div>
     <div
-      v-if="secondaryLabel"
-      class="serif-italic text-[14px] text-[var(--color-text-muted)] tracking-wide"
+      v-if="secondaryLabel && !props.compact"
+      class="text-[11px] uppercase tracking-[0.16em] text-[var(--color-text-faint)] tnum"
     >
       {{ secondaryLabel }}
     </div>

@@ -10,19 +10,14 @@ const props = defineProps<{
 interface Step {
   key: "download" | "separate" | "melody" | "shift" | "ready";
   label: string;
-  technical: string;
 }
 
 const STEPS: Step[] = [
-  { key: "download", label: "Downloading the song", technical: "yt-dlp" },
-  {
-    key: "separate",
-    label: "Separating vocals from music",
-    technical: "demucs",
-  },
-  { key: "melody", label: "Reading the melody", technical: "crepe" },
-  { key: "shift", label: "Tuning to your key", technical: "rubberband" },
-  { key: "ready", label: "Ready", technical: "" },
+  { key: "download", label: "Downloading the song" },
+  { key: "separate", label: "Separating vocals from music" },
+  { key: "melody", label: "Reading the melody" },
+  { key: "shift", label: "Tuning to your key" },
+  { key: "ready", label: "Ready" },
 ];
 
 type StepState = "done" | "active" | "pending";
@@ -101,12 +96,6 @@ const visible = computed(() => props.status !== "idle");
             ]"
           >
             {{ step.label }}
-          </div>
-          <div
-            v-if="step.technical"
-            class="serif-italic text-[11px] text-[var(--color-text-faint)] mt-0.5"
-          >
-            {{ step.technical }}
           </div>
         </div>
       </li>

@@ -43,14 +43,14 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen flex flex-col">
+  <div class="min-h-[100dvh] flex flex-col">
     <!-- Hero state: centered logo + searchbar, no results yet -->
     <div
       v-if="showHero"
       class="flex-1 flex flex-col items-center justify-center px-4"
     >
       <h1
-        class="font-serif italic text-[96px] leading-none text-[var(--color-text)] mb-2 tracking-tight"
+        class="font-serif italic text-[64px] sm:text-[88px] md:text-[96px] leading-none text-[var(--color-text)] mb-2 tracking-tight"
       >
         cantus
       </h1>

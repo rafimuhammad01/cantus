@@ -3,7 +3,6 @@ package handlers_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -95,60 +94,47 @@ func TestPreviewKeyHandler(t *testing.T) {
 		wantCachedAfter   bool // assert preview-key.json is in storage after request
 	}{
 		{
-			name: "cache hit returns persisted key",
+			name: "melody.json present returns its key",
 			url:  "/api/preview-key/" + validID + "?sig=" + validSig,
 			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey) {
 				st := newKeyStorage(t)
-				// Pre-stage preview-key.json.
-				keyPath, _ := st.LocalPath(context.Background(), validID, "preview-key.json")
-				_ = os.MkdirAll(filepath.Dir(keyPath), 0o755)
-				_ = os.WriteFile(keyPath, []byte(`{"key":"D major"}`), 0o644)
+				// Pre-stage melody.json (CREPE on isolated full-song vocals — the one accurate source).
+				melodyPath, _ := st.LocalPath(context.Background(), validID, "melody.json")
+				_ = os.MkdirAll(filepath.Dir(melodyPath), 0o755)
+				_ = os.WriteFile(melodyPath, []byte(`{"key":"F major"}`), 0o644)
 				return st, &fakeYouTubeKey{}, &fakeProcKey{}
 			},
 			wantStatus:        http.StatusOK,
-			wantKey:           "D major",
+			wantKey:           "F major",
 			wantYTCallCount:   0,
 			wantProcCallCount: 0,
-			wantCachedAfter:   true,
 		},
 		{
-			name: "cache miss preview cached processor called result persisted",
+			name: "melody.json absent returns empty key (UI hides the label)",
 			url:  "/api/preview-key/" + validID + "?sig=" + validSig,
 			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey) {
-				st := newKeyStorage(t)
-				// Pre-stage preview.mp3.
-				previewPath, _ := st.LocalPath(context.Background(), validID, "preview.mp3")
-				_ = os.MkdirAll(filepath.Dir(previewPath), 0o755)
-				_ = os.WriteFile(previewPath, []byte("fake preview bytes"), 0o644)
-				proc := &fakeProcKey{key: "A major"}
-				return st, &fakeYouTubeKey{}, proc
+				// Empty storage — no melody.json (song hasn't been generated yet).
+				return newKeyStorage(t), &fakeYouTubeKey{}, &fakeProcKey{}
 			},
 			wantStatus:        http.StatusOK,
-			wantKey:           "A major",
+			wantKey:           "",
 			wantYTCallCount:   0,
-			wantProcCallCount: 1,
-			wantCachedAfter:   true,
+			wantProcCallCount: 0,
 		},
 		{
-			name: "cache miss preview not cached DownloadPreview called processor called",
+			name: "melody.json with empty key field returns empty key",
 			url:  "/api/preview-key/" + validID + "?sig=" + validSig,
 			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey) {
 				st := newKeyStorage(t)
-				yt := &fakeYouTubeKey{
-					onDownload: func(videoID string) {
-						p, _ := st.LocalPath(context.Background(), videoID, "preview.mp3")
-						_ = os.MkdirAll(filepath.Dir(p), 0o755)
-						_ = os.WriteFile(p, []byte("fake preview bytes"), 0o644)
-					},
-				}
-				proc := &fakeProcKey{key: "C minor"}
-				return st, yt, proc
+				melodyPath, _ := st.LocalPath(context.Background(), validID, "melody.json")
+				_ = os.MkdirAll(filepath.Dir(melodyPath), 0o755)
+				_ = os.WriteFile(melodyPath, []byte(`{"key":""}`), 0o644)
+				return st, &fakeYouTubeKey{}, &fakeProcKey{}
 			},
 			wantStatus:        http.StatusOK,
-			wantKey:           "C minor",
-			wantYTCallCount:   1,
-			wantProcCallCount: 1,
-			wantCachedAfter:   true,
+			wantKey:           "",
+			wantYTCallCount:   0,
+			wantProcCallCount: 0,
 		},
 		{
 			name: "invalid videoID",
@@ -184,35 +170,19 @@ func TestPreviewKeyHandler(t *testing.T) {
 			wantProcCallCount: 0,
 		},
 		{
-			name: "DownloadPreview fails returns 502",
-			url:  "/api/preview-key/" + validID + "?sig=" + validSig,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey) {
-				// Empty storage — no preview.mp3, no preview-key.json.
-				st := newKeyStorage(t)
-				yt := &fakeYouTubeKey{err: errors.New("yt-dlp died")}
-				return st, yt, &fakeProcKey{}
-			},
-			wantStatus:        http.StatusBadGateway,
-			wantBodyContains:  "download failed",
-			wantYTCallCount:   1,
-			wantProcCallCount: 0,
-		},
-		{
-			name: "PreviewKey processor returns error returns 502",
+			name: "malformed melody.json returns 500",
 			url:  "/api/preview-key/" + validID + "?sig=" + validSig,
 			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey) {
 				st := newKeyStorage(t)
-				// Pre-stage preview.mp3 so DownloadPreview is skipped.
-				previewPath, _ := st.LocalPath(context.Background(), validID, "preview.mp3")
-				_ = os.MkdirAll(filepath.Dir(previewPath), 0o755)
-				_ = os.WriteFile(previewPath, []byte("fake preview bytes"), 0o644)
-				proc := &fakeProcKey{err: errors.New("keyfinder failed")}
-				return st, &fakeYouTubeKey{}, proc
+				melodyPath, _ := st.LocalPath(context.Background(), validID, "melody.json")
+				_ = os.MkdirAll(filepath.Dir(melodyPath), 0o755)
+				_ = os.WriteFile(melodyPath, []byte(`not-json{`), 0o644)
+				return st, &fakeYouTubeKey{}, &fakeProcKey{}
 			},
-			wantStatus:        http.StatusBadGateway,
-			wantBodyContains:  "preview-key estimation failed",
+			wantStatus:        http.StatusInternalServerError,
+			wantBodyContains:  "melody parse failed",
 			wantYTCallCount:   0,
-			wantProcCallCount: 1,
+			wantProcCallCount: 0,
 		},
 	}
 
@@ -237,7 +207,7 @@ func TestPreviewKeyHandler(t *testing.T) {
 				}
 			}
 
-			if tt.wantKey != "" {
+			if rec.Code == http.StatusOK {
 				var resp struct {
 					Key string `json:"key"`
 				}

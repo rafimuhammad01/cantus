@@ -278,20 +278,21 @@ func TestMelodyHandler(t *testing.T) {
 			},
 		},
 		{
-			name: "preview-key.json overrides melody.json key (single source of truth)",
+			name: "melody.json key is the source of truth even when preview-key.json exists",
 			url:  "/api/melody/" + validID + "/-2?sig=" + validSig,
 			setup: func(t *testing.T, st *services.LocalDiskStorage) {
-				// melody.json says "A minor" (Krumhansl on isolated vocals)
+				// melody.json says "F major" (CREPE on isolated full-song vocals — the accurate signal).
 				melodyPayload := []byte(`{
 					"hop_ms": 50,
 					"min_hz": 220.0,
 					"max_hz": 440.0,
-					"key": "A minor",
+					"key": "F major",
 					"frames": [[0, 220.0]]
 				}`)
 				stageMelody(t, st, validID, melodyPayload)
-				// preview-key.json says "F major" (chroma on full mix) — must win.
-				previewKeyPayload := []byte(`{"key":"F major"}`)
+				// preview-key.json has a disagreeing value (chroma-on-full-mix is prone to
+				// relative-minor/IV-of confusion). It must NOT override the melody.json key.
+				previewKeyPayload := []byte(`{"key":"D minor"}`)
 				tmp := filepath.Join(t.TempDir(), "preview-key.json")
 				if err := os.WriteFile(tmp, previewKeyPayload, 0o644); err != nil {
 					t.Fatalf("write preview-key tmp: %v", err)
@@ -304,39 +305,11 @@ func TestMelodyHandler(t *testing.T) {
 			checkBody: func(t *testing.T, got melodyResponse) {
 				t.Helper()
 				if got.Key != "F major" {
-					t.Errorf("key: got %q, want %q (preview-key should override)", got.Key, "F major")
+					t.Errorf("key: got %q, want %q (melody.json must win)", got.Key, "F major")
 				}
 				// F major − 2 = D# major (F=5, 5-2=3, noteNames[3]="D#")
 				if got.TransposedKey != "D# major" {
 					t.Errorf("transposed_key: got %q, want %q", got.TransposedKey, "D# major")
-				}
-			},
-		},
-		{
-			name: "preview-key.json with empty key falls through to melody.json",
-			url:  "/api/melody/" + validID + "/0?sig=" + validSig,
-			setup: func(t *testing.T, st *services.LocalDiskStorage) {
-				melodyPayload := []byte(`{
-					"hop_ms": 50,
-					"min_hz": 220.0,
-					"max_hz": 440.0,
-					"key": "A minor",
-					"frames": [[0, 220.0]]
-				}`)
-				stageMelody(t, st, validID, melodyPayload)
-				tmp := filepath.Join(t.TempDir(), "preview-key.json")
-				if err := os.WriteFile(tmp, []byte(`{"key":""}`), 0o644); err != nil {
-					t.Fatalf("write preview-key tmp: %v", err)
-				}
-				if err := st.Commit(context.Background(), validID, "preview-key.json", tmp); err != nil {
-					t.Fatalf("commit preview-key: %v", err)
-				}
-			},
-			wantStatus: http.StatusOK,
-			checkBody: func(t *testing.T, got melodyResponse) {
-				t.Helper()
-				if got.Key != "A minor" {
-					t.Errorf("key: got %q, want %q (should fall through to melody.json)", got.Key, "A minor")
 				}
 			},
 		},

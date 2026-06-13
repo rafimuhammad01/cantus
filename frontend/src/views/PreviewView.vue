@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { usePlayerStore } from "@/stores/player";
 import { shortKey, transposeKey } from "@/utils/key";
-import { midiToNoteName } from "@/utils/pitch";
+import { midiToNoteName, hzToMidi } from "@/utils/pitch";
 import KeySelector from "@/components/KeySelector.vue";
 import VocalOctaveSelector from "@/components/VocalOctaveSelector.vue";
 import AudioPlayer from "@/components/AudioPlayer.vue";
@@ -27,6 +27,30 @@ const routeVideoId = computed(() => {
 
 const noContext = computed(
   () => !player.videoId || player.videoId !== routeVideoId.value,
+);
+
+// Display key comes only from /api/preview-key, which re-reads melody.json's
+// key (CREPE on isolated full-song vocals). When the full song hasn't been
+// generated the endpoint returns "" and the KEY label hides.
+const displayKey = computed(() => player.previewKey || null);
+
+// Voice range follows the same rule as the key: only show when the full song
+// has been analyzed. We derive it from player.melody (CREPE on full vocals)
+// rather than player.vocalRange (which falls back to the 30s previewMelody)
+// so that we don't display a range computed from too little audio.
+const fullVocalRange = computed<{ minMidi: number; maxMidi: number } | null>(
+  () => {
+    if (!player.melody) return null;
+    const voiced = player.melody.frames
+      .filter(([, hz]) => hz > 0)
+      .map(([, hz]) => hzToMidi(hz));
+    if (voiced.length === 0) return null;
+    const shift = player.vocalOctaveShift;
+    return {
+      minMidi: Math.round(Math.min(...voiced) + shift),
+      maxMidi: Math.round(Math.max(...voiced) + shift),
+    };
+  },
 );
 
 const shiftPending = ref(false);
@@ -89,10 +113,13 @@ onMounted(() => {
     return;
   }
   pendingSemitones.value = player.semitones;
-  // Fire loadPreviewStems without awaiting — UI reacts to reactive flags.
-  // loadPreviewKey() is intentionally removed: previewMelody provides the key
-  // once stems are ready, and keeping an extra CREPE-less key call would
-  // require two separate sources of truth for the same value.
+  // loadPreviewKey reads melody.json's key via /api/preview-key when the song
+  // has been generated previously; returns "" otherwise so the KEY label hides.
+  void player.loadPreviewKey();
+  // loadFullMelodyIfAvailable tries /api/melody and 404s silently if the song
+  // hasn't been generated. When it succeeds, player.melody populates and the
+  // VOICE range subtitle below renders — same gating rule as the KEY label.
+  void player.loadFullMelodyIfAvailable();
   void player.loadPreviewStems();
 });
 
@@ -102,7 +129,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen pb-32">
+  <div class="min-h-[100dvh] pb-32">
     <template v-if="!noContext">
       <!-- Backdrop + artwork header -->
       <div class="relative">
@@ -127,24 +154,22 @@ onUnmounted(() => {
           >
             ← Back to search
           </button>
-          <div
-            class="mt-8 flex flex-col sm:flex-row items-center sm:items-end gap-6"
-          >
+          <div class="mt-8 flex flex-col items-center text-center gap-5">
             <img
               v-if="player.song?.thumbnail_url"
               :src="player.song.thumbnail_url"
               :alt="player.song.title"
-              class="w-[240px] h-[240px] sm:w-[280px] sm:h-[280px] rounded-xl object-cover shrink-0"
-              style="box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5)"
+              class="w-[140px] h-[140px] rounded-xl object-cover shrink-0"
+              style="box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5)"
             />
-            <div class="text-center sm:text-left min-w-0 flex-1">
+            <div class="min-w-0 max-w-xl">
               <h1
-                class="font-serif text-[36px] sm:text-[44px] leading-tight text-[var(--color-text)] tracking-tight"
+                class="font-serif text-[30px] sm:text-[36px] leading-tight text-[var(--color-text)] tracking-tight"
               >
                 {{ player.song?.title }}
               </h1>
-              <div class="mt-2 text-[14px] text-[var(--color-text-muted)]">
-                <span>by {{ player.song?.artist }}</span>
+              <div class="mt-2 text-[13px] text-[var(--color-text-muted)] tnum">
+                <span>{{ player.song?.artist }}</span>
                 <template v-if="player.song?.album">
                   · {{ player.song.album }}</template
                 >
@@ -163,16 +188,10 @@ onUnmounted(() => {
           <KeySelector
             :semitones="pendingSemitones"
             :disabled="!player.previewStemsReady"
-            :original-key="
-              player.previewOriginalKey
-                ? shortKey(player.previewOriginalKey)
-                : undefined
-            "
+            :original-key="displayKey ? shortKey(displayKey) : undefined"
             :transposed-key="
-              player.previewOriginalKey
-                ? shortKey(
-                    transposeKey(player.previewOriginalKey, pendingSemitones),
-                  )
+              displayKey
+                ? shortKey(transposeKey(displayKey, pendingSemitones))
                 : undefined
             "
             @change="onSemitonesChange"
@@ -258,8 +277,8 @@ onUnmounted(() => {
                 :current="player.vocalOctaveShift"
                 :disabled="!player.previewStemsReady"
                 :range="
-                  player.vocalRange
-                    ? `${midiToNoteName(player.vocalRange.minMidi)} – ${midiToNoteName(player.vocalRange.maxMidi)}`
+                  fullVocalRange
+                    ? `${midiToNoteName(fullVocalRange.minMidi)} – ${midiToNoteName(fullVocalRange.maxMidi)}`
                     : undefined
                 "
                 @change="player.setVocalOctaveShift"
@@ -275,7 +294,7 @@ onUnmounted(() => {
 
       <!-- Sticky bottom CTA -->
       <div
-        class="fixed bottom-0 inset-x-0 z-20 bg-[var(--color-bg)]/90 backdrop-blur border-t border-[var(--color-border)] px-4 py-4"
+        class="fixed bottom-0 inset-x-0 z-20 bg-[var(--color-bg)]/90 backdrop-blur border-t border-[var(--color-border)] px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
       >
         <div class="max-w-md mx-auto flex flex-col items-center gap-1">
           <button

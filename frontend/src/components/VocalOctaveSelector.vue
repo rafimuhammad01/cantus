@@ -4,7 +4,8 @@ import { computed } from "vue";
 const props = defineProps<{
   current: -12 | 0 | 12;
   disabled?: boolean;
-  range?: string; // e.g. "C3 – G4"; rendered as italic Fraunces secondary line
+  range?: string; // e.g. "C3 – G4"; shown as secondary line unless compact
+  compact?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -31,6 +32,7 @@ const showRange = computed(() => !!props.range);
 <template>
   <div class="flex flex-col items-center gap-1.5">
     <div
+      v-if="!props.compact"
       class="text-[11px] uppercase tracking-[0.16em] text-[var(--color-text-faint)]"
     >
       Voice
@@ -57,8 +59,8 @@ const showRange = computed(() => !!props.range);
       </button>
     </div>
     <div
-      v-if="showRange"
-      class="serif-italic text-[13px] text-[var(--color-text-muted)]"
+      v-if="showRange && !props.compact"
+      class="text-[11px] uppercase tracking-[0.16em] text-[var(--color-text-faint)] tnum"
     >
       {{ range }}
     </div>
