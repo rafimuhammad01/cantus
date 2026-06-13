@@ -343,11 +343,6 @@ function tick(): void {
   rafId = requestAnimationFrame(tick);
 }
 
-// seeked (not seeking) fires once after the scrub completes — seeking fires repeatedly during drag
-function onSeeked(): void {
-  pitchStore.trimSinceSeek(props.audioEl.currentTime);
-}
-
 // ─── Mic control ─────────────────────────────────────────────────────────────
 
 const audioError = ref<string | null>(null);
@@ -414,7 +409,6 @@ onMounted(() => {
     // Errors surface through pitchDetection.error when user clicks Play & Sing.
   });
 
-  props.audioEl.addEventListener("seeked", onSeeked);
   props.audioEl.addEventListener("ended", onEnded);
   rafId = requestAnimationFrame(tick);
 
@@ -447,7 +441,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (rafId !== null) cancelAnimationFrame(rafId);
-  props.audioEl.removeEventListener("seeked", onSeeked);
   props.audioEl.removeEventListener("ended", onEnded);
   pitchDetection.stop();
   pitchStore.reset();

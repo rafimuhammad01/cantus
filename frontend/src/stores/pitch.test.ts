@@ -68,52 +68,47 @@ describe("C. currentMidi tracking", () => {
 });
 
 // ---------------------------------------------------------------------------
-// D. trimSinceSeek truncation cases
+// D. recordSample preserves sort order after seek-back (review-your-pitch UX)
 // ---------------------------------------------------------------------------
-describe("D. trimSinceSeek", () => {
-  function populateStore(
-    store: ReturnType<typeof usePitchStore>,
-    times: number[],
-    midis: (number | null)[],
-  ) {
-    times.forEach((t, i) => store.recordSample(t, midis[i] ?? null, null));
-  }
-
-  it.each<[string, number, number, number[]]>([
-    ["trim at 2.5 → keep indices 0,1", 2.5, 2, [1, 2]],
-    ["trim at 0.5 → keep none", 0.5, 0, []],
-    ["trim at 5.5 → no-op, keep all 5", 5.5, 5, [1, 2, 3, 4, 5]],
-    ["trim at exact 3.0 → keep indices 0,1 (3.0 removed)", 3.0, 2, [1, 2]],
-  ])("%s", (_label, trimAt, expectedLen, expectedTimes) => {
+describe("D. recordSample sort-order + overwrite on seek-back", () => {
+  it("seek-back then resume: prior pitch survives, new samples splice in sorted", () => {
     const store = usePitchStore();
-    populateStore(store, [1, 2, 3, 4, 5], [60, 60, 60, 60, 60]);
-    store.trimSinceSeek(trimAt);
-    expect(store.userTimes.length).toBe(expectedLen);
-    expect(store.userMidis.length).toBe(expectedLen);
-    expect(store.userTimes).toEqual(expectedTimes);
+    const initial = [1.0, 2.0, 3.0, 4.0, 5.0];
+    initial.forEach((t) => store.recordSample(t, 60.0, null));
+    // User seeks back to 2.0 and sings at a fresh time slot between samples.
+    store.recordSample(2.5, 65.0, null);
+    expect(store.userTimes).toEqual([1.0, 2.0, 2.5, 3.0, 4.0, 5.0]);
+    expect(store.userMidis).toEqual([60.0, 60.0, 65.0, 60.0, 60.0, 60.0]);
   });
 
-  it("trim with empty arrays — no throw", () => {
+  it("re-singing the same time slot overwrites within the rAF-frame epsilon", () => {
     const store = usePitchStore();
-    expect(() => store.trimSinceSeek(1.0)).not.toThrow();
+    store.recordSample(1.0, 60.0, null);
+    store.recordSample(1.01, 70.0, null); // 10ms later = same frame
+    expect(store.userTimes).toEqual([1.0]); // not spliced
+    expect(store.userMidis).toEqual([70.0]); // overwritten
+  });
+
+  it("just outside the epsilon (30ms) inserts a new sample", () => {
+    const store = usePitchStore();
+    store.recordSample(1.0, 60.0, null);
+    store.recordSample(1.03, 70.0, null);
+    expect(store.userTimes).toEqual([1.0, 1.03]);
+    expect(store.userMidis).toEqual([60.0, 70.0]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// E. trimSinceSeek does NOT reset hits/total
+// E. counters: every recorded sample counts, including overwrites
 // ---------------------------------------------------------------------------
-describe("E. trimSinceSeek preserves frameHits/frameTotal", () => {
-  it("100 voiced on-target samples then trim — hits/total unchanged", () => {
+describe("E. recordSample counters are cumulative across attempts", () => {
+  it("overwriting an existing slot still bumps frameHits/frameTotal", () => {
     const store = usePitchStore();
-    for (let i = 0; i < 100; i++) {
-      store.recordSample(i * 0.1, 60.0, 60.0);
-    }
-    const hitsBefore = store.frameHits;
-    const totalBefore = store.frameTotal;
-    store.trimSinceSeek(0);
-    expect(store.frameHits).toBe(hitsBefore);
-    expect(store.frameTotal).toBe(totalBefore);
-    expect(store.userTimes.length).toBe(0); // arrays were cleared
+    store.recordSample(1.0, 60.0, 60.0); // hit
+    store.recordSample(1.0, 60.0, 60.0); // overwrite, also a hit
+    expect(store.frameTotal).toBe(2);
+    expect(store.frameHits).toBe(2);
+    expect(store.userTimes.length).toBe(1); // array stays deduped
   });
 });
 

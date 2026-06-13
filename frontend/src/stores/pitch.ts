@@ -28,34 +28,69 @@ export const usePitchStore = defineStore("pitch", () => {
     return frameHits.value / frameTotal.value;
   });
 
+  // Samples within this many seconds of an existing sample are treated as the
+  // same frame and overwrite it. rAF tick rate is ~16ms; SPICE frame rate ~32ms.
+  // 25ms sits between, so a second pass through the same time region replaces
+  // the prior pitch instead of inserting a near-duplicate.
+  const SAMPLE_EPSILON = 0.025;
+
   /** smoothedUserMidi is the post-median value from PitchFilter. */
   function recordSample(
     t: number,
     smoothedUserMidi: number | null,
     targetMidi: number | null,
   ): void {
-    userTimes.value.push(t);
-    userMidis.value.push(smoothedUserMidi);
     currentMidi.value = smoothedUserMidi;
 
     const userFinite =
       smoothedUserMidi !== null && !Number.isNaN(smoothedUserMidi);
     const targetFinite = targetMidi !== null && !Number.isNaN(targetMidi);
+    const countable = userFinite && targetFinite;
+    // Hit = "right note" + "adjacent close" bands from the diagram (green or
+    // yellow). Matches PitchDiagram's segmentColor logic for consistency.
+    const isHit = countable && Math.abs(smoothedUserMidi! - targetMidi!) <= 2.0;
 
-    if (userFinite && targetFinite) {
-      frameTotal.value++;
-      // Hit = "right note" + "adjacent close" bands from the diagram (green or
-      // yellow). Matches PitchDiagram's segmentColor logic for consistency.
-      frameHits.value +=
-        Math.abs(smoothedUserMidi! - targetMidi!) <= 2.0 ? 1 : 0;
+    const times = userTimes.value;
+    const midis = userMidis.value;
+
+    // Fast path: appending past the end (typical forward playback).
+    if (times.length === 0 || t > times[times.length - 1] + SAMPLE_EPSILON) {
+      times.push(t);
+      midis.push(smoothedUserMidi);
+      if (countable) {
+        frameTotal.value++;
+        if (isHit) frameHits.value++;
+      }
+      return;
     }
-  }
 
-  function trimSinceSeek(t: number): void {
-    if (userTimes.value.length === 0) return;
-    const i = searchsorted(userTimes.value, t);
-    userTimes.value = userTimes.value.slice(0, i);
-    userMidis.value = userMidis.value.slice(0, i);
+    // Out-of-order sample (user seeked back and resumed). Find the closest
+    // existing slot; overwrite if within epsilon, else splice in.
+    const i = searchsorted(times, t);
+    const leftDist = i > 0 ? t - times[i - 1] : Infinity;
+    const rightDist = i < times.length ? times[i] - t : Infinity;
+    const overwriteIdx =
+      leftDist <= rightDist
+        ? leftDist <= SAMPLE_EPSILON
+          ? i - 1
+          : -1
+        : rightDist <= SAMPLE_EPSILON
+          ? i
+          : -1;
+
+    if (overwriteIdx >= 0) {
+      midis[overwriteIdx] = smoothedUserMidi;
+    } else {
+      times.splice(i, 0, t);
+      midis.splice(i, 0, smoothedUserMidi);
+    }
+    // Counters are cumulative across attempts — every recorded sample counts
+    // toward hit rate, including overwrites. Aligns with the existing intent
+    // that hit/total survive any array mutation.
+    if (countable) {
+      frameTotal.value++;
+      if (isHit) frameHits.value++;
+    }
   }
 
   function reset(): void {
@@ -80,7 +115,6 @@ export const usePitchStore = defineStore("pitch", () => {
     isActive,
     hitRate,
     recordSample,
-    trimSinceSeek,
     reset,
     setActive,
   };
