@@ -16,27 +16,39 @@ const PT_OFFSET = 25.58;
 const PT_SLOPE = 63.07;
 
 // Reject frames where SPICE's uncertainty is high. TF blog suggests 0.9 for
-// clean offline audio; live mic input has lower confidence on real singing
-// (breath, vibrato, consonants) so we relax to 0.75. Lower = more notes
-// detected, with occasional wrong notes sneaking in.
-const CONF_THRESHOLD = 0.75;
+// clean offline audio; 0.75 let noise frames sneak through and produce sustained
+// high-pitch spikes that the median couldn't kill. 0.85 trades a small drop in
+// recall for substantially fewer noise pitches in real-room conditions.
+const CONF_THRESHOLD = 0.85;
 
-// C2–F#6: practical bass-profundo through soprano modal-voice range.
+// C2–C6: practical bass-profundo through soprano modal-voice. The old upper
+// bound of 1500 Hz (≈F#6) covered whistle-register / extreme belt — almost
+// never the user, almost always a noise spike or octave-doubling error.
 const HZ_LOW = 65;
-const HZ_HIGH = 1500;
+const HZ_HIGH = 1050;
 
 // SPICE expects exactly 1024 samples at 16 kHz.
 const SPICE_INPUT_SIZE = 1024;
 const SPICE_INPUT_RATE = 16000;
 
-// 3-frame trailing median to suppress single-frame jitter. SPICE doesn't have
-// NSDF's subharmonic bias so we don't need the 9-frame window the old filter used.
-const SMOOTH_WINDOW = 3;
+// 5-frame trailing median. Noise spikes that pass the confidence + RMS gates
+// tend to sustain across 2–3 frames; a 3-frame window can be overwhelmed by
+// them. Widening to 5 reliably suppresses 2-frame bursts at the cost of a
+// small added lag (~50ms at SPICE's frame rate).
+const SMOOTH_WINDOW = 5;
 
-// RMS energy floor (linear, on [-1, 1] samples). Below this the frame is
-// almost certainly room tone / silence — skip SPICE entirely instead of
-// letting it emit a low-confidence noise pitch. ~ -45 dBFS.
-const SILENCE_RMS = 0.005;
+// RMS energy floor (linear, on [-1, 1] samples). ~-38 dBFS. The old -45 dBFS
+// floor passed quiet room tone through, which SPICE then tried to fit a pitch
+// to — producing the high-pitch jumps the user reported. Singing above the
+// noise floor will easily clear -38 dBFS.
+const SILENCE_RMS = 0.012;
+
+// Reject frames whose detected MIDI is more than this many semitones above
+// the last stable detection. SPICE octave-doubles on noisy / breathy frames
+// (e.g. a sung A3 momentarily reads as A4 or higher). Real sung intervals
+// within a phrase are almost always under an octave; anything larger is
+// almost certainly a doubling error.
+const OCTAVE_JUMP_LIMIT = 12;
 
 // How long to hold the last detected note after detection drops out. Smooths
 // over brief sub-threshold gaps (consonants, vibrato dips) so the displayed
@@ -44,12 +56,13 @@ const SILENCE_RMS = 0.005;
 // the user has actually stopped singing.
 const HOLD_MS = 140;
 
-// ─── Model URLs (tried in order; first success wins) ─────────────────────────
+// ─── Model URL ───────────────────────────────────────────────────────────────
 
-const SPICE_URLS = [
-  "https://tfhub.dev/google/tfjs-model/spice/2/default/1",
-  "https://tfhub.dev/google/tfjs-model/spice/1/default/1",
-];
+// Self-hosted SPICE v2 in frontend/public/spice-model/. We vendored the model
+// because Safari rejects tfhub.dev's CORS headers on the model fetch — Chrome
+// is more permissive. Same-origin avoids the issue entirely and removes the
+// network dependency at first run.
+const SPICE_URL = "/spice-model/model.json";
 
 // ─── Module-level model cache — load once, reuse across mounts ───────────────
 
@@ -58,22 +71,16 @@ let modelPromise: Promise<tf.GraphModel> | null = null;
 function getModel(): Promise<tf.GraphModel> {
   if (!modelPromise) {
     modelPromise = (async () => {
-      let lastErr: unknown;
-      for (const url of SPICE_URLS) {
-        try {
-          const m = await tf.loadGraphModel(url, { fromTFHub: true });
-          _isModelReady.value = true;
-          return m;
-        } catch (e) {
-          console.warn(`[spice] load failed for ${url}:`, e);
-          lastErr = e;
-        }
+      try {
+        const m = await tf.loadGraphModel(SPICE_URL);
+        _isModelReady.value = true;
+        return m;
+      } catch (e) {
+        console.warn(`[spice] load failed for ${SPICE_URL}:`, e);
+        // Reset so the next mount can retry after a network blip.
+        modelPromise = null;
+        throw new Error(`SPICE load failed: ${(e as Error)?.message ?? e}`);
       }
-      // Reset so the next mount can retry after a network blip.
-      modelPromise = null;
-      throw new Error(
-        `SPICE load failed: ${(lastErr as Error)?.message ?? lastErr}`,
-      );
     })();
   }
   return modelPromise;
@@ -107,6 +114,7 @@ export function usePitchDetectionSPICE(): UsePitchDetectionSPICE {
   let rafId: number | null = null;
   let audioCtx: AudioContext | null = null;
   let mediaStream: MediaStream | null = null;
+  let sinkAudioEl: HTMLAudioElement | null = null;
   let model: tf.GraphModel | null = null;
 
   // Trailing window for median smoothing; holds MIDI values or null for silent frames.
@@ -122,17 +130,13 @@ export function usePitchDetectionSPICE(): UsePitchDetectionSPICE {
     error.value = null;
     isLoading.value = true;
 
-    try {
-      model = await getModel();
-    } catch (e) {
-      error.value = `Could not load pitch detector — check connection`;
-      isLoading.value = false;
-      return;
-    }
-
     let stream: MediaStream;
     try {
-      // Disable browser processing that destroys pitch accuracy.
+      // Call getUserMedia FIRST (before any other await) so Safari's
+      // user-gesture authority is consumed immediately. Chaining awaits before
+      // this can silently drop the gesture and Safari refuses the mic without
+      // throwing. Disable browser audio processing — echoCancellation /
+      // noiseSuppression / AGC filter the spectrum SPICE relies on.
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: false,
@@ -153,8 +157,42 @@ export function usePitchDetectionSPICE(): UsePitchDetectionSPICE {
       return;
     }
 
+    // Now load the model. If preloaded (typical), this resolves instantly.
+    try {
+      model = await getModel();
+    } catch (e) {
+      stream.getTracks().forEach((t) => t.stop());
+      error.value = `Could not load pitch detector — check connection`;
+      isLoading.value = false;
+      return;
+    }
+
     mediaStream = stream;
+
+    // Safari workaround: some WebKit versions don't pump a MediaStream through
+    // Web Audio unless the stream is also being consumed by an HTMLMediaElement.
+    // Attach to a muted <audio> element and play() so Safari treats the stream
+    // as active. Element is held on the closure so it isn't GC'd mid-session.
+    const sinkEl = document.createElement("audio");
+    sinkEl.srcObject = stream;
+    sinkEl.muted = true;
+    try {
+      await sinkEl.play();
+    } catch (e) {
+      console.warn("[spice] sink <audio> play() failed:", e);
+    }
+    sinkAudioEl = sinkEl;
+
     audioCtx = new AudioContext({ latencyHint: "interactive" });
+    // Safari/iOS often start the context in "suspended" state even when created
+    // from a user gesture — explicit resume() is needed before audio flows.
+    if (audioCtx.state === "suspended") {
+      try {
+        await audioCtx.resume();
+      } catch (e) {
+        console.warn("[spice] audioCtx.resume() failed:", e);
+      }
+    }
 
     // Compute the smallest power-of-2 raw frame size such that after decimating
     // to 16 kHz we have at least SPICE_INPUT_SIZE samples.
@@ -169,8 +207,14 @@ export function usePitchDetectionSPICE(): UsePitchDetectionSPICE {
     analyser.smoothingTimeConstant = 0;
 
     const source = audioCtx.createMediaStreamSource(stream);
-    // Intentionally not connecting analyser to destination — we don't want mic playback.
     source.connect(analyser);
+    // Safari only processes nodes whose graph reaches destination. Without this
+    // sink, getFloatTimeDomainData returns all zeros (Chrome processes "dangling"
+    // graphs; Safari doesn't). Mute via gain=0 so the user never hears their mic.
+    const silentSink = audioCtx.createGain();
+    silentSink.gain.value = 0;
+    analyser.connect(silentSink);
+    silentSink.connect(audioCtx.destination);
 
     const rawBuf = new Float32Array(rawFrameSize);
     const downBuf = new Float32Array(SPICE_INPUT_SIZE);
@@ -205,7 +249,9 @@ export function usePitchDetectionSPICE(): UsePitchDetectionSPICE {
       if (rms >= SILENCE_RMS) {
         const inputTensor = tf.tensor(downBuf); // shape [1024]
         try {
-          // executeAsync is the safe default — SPICE may include dynamic ops.
+          // executeAsync is the safe default — Safari's TFJS backend doesn't
+          // always honor synchronous execute() even on graphs without control
+          // flow. The "model.execute() instead" warning is cosmetic here.
           // Named input matches magenta-js spice/pitch_utils.ts reference implementation.
           const outputs = (await model!.executeAsync({
             input_audio_samples: inputTensor,
@@ -222,7 +268,20 @@ export function usePitchDetectionSPICE(): UsePitchDetectionSPICE {
           const hz = spiceToHz(pitchData[0]);
 
           if (confidence >= CONF_THRESHOLD && hz > HZ_LOW && hz < HZ_HIGH) {
-            midi = hzToMidi(hz);
+            const candidate = hzToMidi(hz);
+            // Octave-jump guard: when we already have a recent stable note,
+            // reject candidates more than OCTAVE_JUMP_LIMIT semitones above it.
+            // Doesn't gate downward jumps since real phrases can drop fast
+            // (sustained note → low consonant); upward sudden jumps are the
+            // noise-doubling failure mode the user reported.
+            if (
+              lastDetectedMidi !== null &&
+              candidate - lastDetectedMidi > OCTAVE_JUMP_LIMIT
+            ) {
+              midi = null;
+            } else {
+              midi = candidate;
+            }
           }
 
           if (frameCount === 0) {
@@ -293,6 +352,11 @@ export function usePitchDetectionSPICE(): UsePitchDetectionSPICE {
     if (mediaStream !== null) {
       mediaStream.getTracks().forEach((t) => t.stop());
       mediaStream = null;
+    }
+    if (sinkAudioEl !== null) {
+      sinkAudioEl.pause();
+      sinkAudioEl.srcObject = null;
+      sinkAudioEl = null;
     }
     smoothBuf.length = 0;
     currentMidi.value = null;
