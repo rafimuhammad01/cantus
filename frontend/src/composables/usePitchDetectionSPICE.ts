@@ -15,8 +15,11 @@ export const isModelReady = _isModelReady;
 const PT_OFFSET = 25.58;
 const PT_SLOPE = 63.07;
 
-// Reject frames where SPICE's uncertainty is high. TF blog recommends 0.9.
-const CONF_THRESHOLD = 0.9;
+// Reject frames where SPICE's uncertainty is high. TF blog suggests 0.9 for
+// clean offline audio; live mic input has lower confidence on real singing
+// (breath, vibrato, consonants) so we relax to 0.75. Lower = more notes
+// detected, with occasional wrong notes sneaking in.
+const CONF_THRESHOLD = 0.75;
 
 // C2–F#6: practical bass-profundo through soprano modal-voice range.
 const HZ_LOW = 65;
@@ -29,6 +32,17 @@ const SPICE_INPUT_RATE = 16000;
 // 3-frame trailing median to suppress single-frame jitter. SPICE doesn't have
 // NSDF's subharmonic bias so we don't need the 9-frame window the old filter used.
 const SMOOTH_WINDOW = 3;
+
+// RMS energy floor (linear, on [-1, 1] samples). Below this the frame is
+// almost certainly room tone / silence — skip SPICE entirely instead of
+// letting it emit a low-confidence noise pitch. ~ -45 dBFS.
+const SILENCE_RMS = 0.005;
+
+// How long to hold the last detected note after detection drops out. Smooths
+// over brief sub-threshold gaps (consonants, vibrato dips) so the displayed
+// line doesn't strobe on/off. Tuned to feel responsive without lying after
+// the user has actually stopped singing.
+const HOLD_MS = 140;
 
 // ─── Model URLs (tried in order; first success wins) ─────────────────────────
 
@@ -165,6 +179,8 @@ export function usePitchDetectionSPICE(): UsePitchDetectionSPICE {
     isLoading.value = false;
 
     let frameCount = 0;
+    let lastDetectedMidi: number | null = null;
+    let lastDetectedAt = 0;
 
     async function tick(): Promise<void> {
       if (!isActive.value) return;
@@ -176,38 +192,48 @@ export function usePitchDetectionSPICE(): UsePitchDetectionSPICE {
         downBuf[i] = rawBuf[Math.round(i * decimationRatio)];
       }
 
-      const inputTensor = tf.tensor(downBuf); // shape [1024]
+      // RMS gate: skip silent frames before paying SPICE inference cost and
+      // before they can poison the smoothing buffer with noise pitches.
+      let sumSq = 0;
+      for (let i = 0; i < SPICE_INPUT_SIZE; i++) {
+        sumSq += downBuf[i] * downBuf[i];
+      }
+      const rms = Math.sqrt(sumSq / SPICE_INPUT_SIZE);
+
       let midi: number | null = null;
 
-      try {
-        // executeAsync is the safe default — SPICE may include dynamic ops.
-        // Named input matches magenta-js spice/pitch_utils.ts reference implementation.
-        const outputs = (await model!.executeAsync({
-          input_audio_samples: inputTensor,
-        })) as tf.Tensor[];
-        // SPICE output order from magenta-js spice/pitch_utils.ts: [uncertainty, pitch].
-        const [uncData, pitchData] = await Promise.all([
-          outputs[0].data() as Promise<Float32Array>, // SPICE: [0] = uncertainty
-          outputs[1].data() as Promise<Float32Array>, // SPICE: [1] = pitch
-        ]);
-        tf.dispose([inputTensor, ...outputs]);
+      if (rms >= SILENCE_RMS) {
+        const inputTensor = tf.tensor(downBuf); // shape [1024]
+        try {
+          // executeAsync is the safe default — SPICE may include dynamic ops.
+          // Named input matches magenta-js spice/pitch_utils.ts reference implementation.
+          const outputs = (await model!.executeAsync({
+            input_audio_samples: inputTensor,
+          })) as tf.Tensor[];
+          // SPICE output order from magenta-js spice/pitch_utils.ts: [uncertainty, pitch].
+          const [uncData, pitchData] = await Promise.all([
+            outputs[0].data() as Promise<Float32Array>, // SPICE: [0] = uncertainty
+            outputs[1].data() as Promise<Float32Array>, // SPICE: [1] = pitch
+          ]);
+          tf.dispose([inputTensor, ...outputs]);
 
-        // SPICE returns one value per chunk when given a single 1024-sample input.
-        const confidence = 1 - uncData[0];
-        const hz = spiceToHz(pitchData[0]);
+          // SPICE returns one value per chunk when given a single 1024-sample input.
+          const confidence = 1 - uncData[0];
+          const hz = spiceToHz(pitchData[0]);
 
-        if (confidence >= CONF_THRESHOLD && hz > HZ_LOW && hz < HZ_HIGH) {
-          midi = hzToMidi(hz);
+          if (confidence >= CONF_THRESHOLD && hz > HZ_LOW && hz < HZ_HIGH) {
+            midi = hzToMidi(hz);
+          }
+
+          if (frameCount === 0) {
+            console.debug("[spice] first inference:", { confidence, hz, midi });
+          }
+          frameCount++;
+        } catch (e) {
+          tf.dispose(inputTensor);
+          // Transient inference errors shouldn't kill the loop — just emit null for the frame.
+          console.warn("[spice] inference error:", e);
         }
-
-        if (frameCount === 0) {
-          console.debug("[spice] first inference:", { confidence, hz, midi });
-        }
-        frameCount++;
-      } catch (e) {
-        tf.dispose(inputTensor);
-        // Transient inference errors shouldn't kill the loop — just emit null for the frame.
-        console.warn("[spice] inference error:", e);
       }
 
       // Trailing 3-frame median.
@@ -216,15 +242,37 @@ export function usePitchDetectionSPICE(): UsePitchDetectionSPICE {
       const finite = smoothBuf.filter(
         (v): v is number => v !== null && isFinite(v),
       );
+      let smoothed: number | null;
       if (finite.length === 0) {
-        currentMidi.value = null;
+        smoothed = null;
       } else {
         const sorted = finite.slice().sort((a, b) => a - b);
         const mid = Math.floor(sorted.length / 2);
-        currentMidi.value =
+        smoothed =
           sorted.length % 2 === 1
             ? sorted[mid]
             : (sorted[mid - 1] + sorted[mid]) / 2;
+      }
+
+      // Hold last detected note across brief sub-threshold gaps so the UI
+      // doesn't strobe on/off during vibrato dips, consonants, etc. Only
+      // applies while the mic still has energy — true silence drops out
+      // immediately via the RMS gate above (midi stays null, smoothBuf
+      // empties within SMOOTH_WINDOW frames, hold expires after HOLD_MS).
+      const nowMs = performance.now();
+      if (smoothed !== null) {
+        lastDetectedMidi = smoothed;
+        lastDetectedAt = nowMs;
+        currentMidi.value = smoothed;
+      } else if (
+        lastDetectedMidi !== null &&
+        rms >= SILENCE_RMS &&
+        nowMs - lastDetectedAt < HOLD_MS
+      ) {
+        currentMidi.value = lastDetectedMidi;
+      } else {
+        currentMidi.value = null;
+        lastDetectedMidi = null;
       }
 
       rafId = requestAnimationFrame(() => void tick());
