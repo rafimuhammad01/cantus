@@ -102,7 +102,7 @@ Module path: `cantus/backend`
 - **JobStore record TTL is separate (1h)** — that cleanup applies to in-memory job status records, not cache files.
 - **tmp/ dirs**: gitignored. `tmp/cache/` holds the permanent cache; other `tmp/` files are scratch working space.
 - **YouTubeService interface** in `backend/services/youtube.go`: swap yt-dlp for a licensed provider without touching handler code.
-- **Storage interface** in `backend/services/storage.go`: handlers/services touch `LocalPath / Has / Commit / Open` only — never filepaths directly. Phase 1 = `LocalDiskStorage`; Phase 2 cloud backend swaps in without handler changes.
+- **Storage interface** in `backend/services/storage.go`: handlers operate on opaque keys via `Key / Has / SignGet / SignPut / Commit / Open`. `LocalDiskStorage` keeps files under `CACHE_DIR` and mints `/internal/blob/{key}?op=&exp=&token=` URLs (HMAC-gated by `VIDEO_ID_SIGNING_KEY`) so Python can fetch/upload via the same URL protocol as production. `R2Storage` uses Cloudflare R2 via `aws-sdk-go-v2` and returns presigned S3 URLs. Selected by `STORAGE_BACKEND` (`local` or `r2`). In `r2` mode, the path-based ProcessorClient still requires the `*LocalDiskStorage` escape hatch (`FilesystemPathForLocalProcessor`) — full URL handoff to Python lands in a follow-up.
 
 ## Testing Endpoints
 
