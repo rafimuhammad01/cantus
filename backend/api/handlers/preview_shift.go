@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -25,7 +23,7 @@ func PreviewShift(
 	signer *services.Signer,
 	storage services.Storage,
 	ytSvc services.YouTubeService,
-	processor services.ProcessorClient,
+	cpu services.CPUProcessorClient,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req previewShiftRequest
@@ -89,37 +87,32 @@ func PreviewShift(
 			}
 
 			if stemWAVHas {
-				// Stem path: shift the clean instrumental stem.
-				local, ok := storage.(*services.LocalDiskStorage)
-				if !ok {
-					http.Error(w, "processor unavailable in this storage mode", http.StatusInternalServerError)
-					return
-				}
-				inputPath := local.FilesystemPathForLocalProcessor(local.Key(videoID, "preview-stems/no_vocals.wav"))
-
-				tmpDir, err := os.MkdirTemp("", "cantus-shift-stem-*")
+				// Stem path: shift the clean instrumental stem via URL handoff.
+				inKey := storage.Key(videoID, "preview-stems/no_vocals.wav")
+				outKey := storage.Key(videoID, stemShiftedName)
+				inURL, err := storage.SignGet(ctx, inKey)
 				if err != nil {
-					log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("os.MkdirTemp failed")
-					writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
+					log.Error().Err(err).Msg("storage.SignGet failed")
+					writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "sign get failed"})
 					return
 				}
-				defer func() { _ = os.RemoveAll(tmpDir) }()
-
-				outputPath := filepath.Join(tmpDir, "shifted.mp3")
-
-				if err := processor.Shift(ctx, inputPath, outputPath, float64(n)); err != nil {
+				outURL, err := storage.SignPut(ctx, outKey)
+				if err != nil {
+					log.Error().Err(err).Msg("storage.SignPut failed")
+					writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "sign put failed"})
+					return
+				}
+				if err := cpu.Shift(ctx, inURL, outURL, float64(n)); err != nil {
 					log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("processor.Shift failed")
 					writeJSON(w, http.StatusBadGateway, errorResponse{Error: "shift failed"})
 					return
 				}
-
-				if err := storage.Commit(ctx, storage.Key(videoID, stemShiftedName), outputPath); err != nil {
-					log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("storage.Commit (stem-shifted) failed")
-					writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage commit failed"})
+				if err := storage.Verify(ctx, outKey); err != nil {
+					log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("storage.Verify failed")
+					writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "shift output not materialized"})
 					return
 				}
-
-				serveKey = storage.Key(videoID, stemShiftedName)
+				serveKey = outKey
 				serveName = stemShiftedName
 			} else {
 				// No stem WAV — try the legacy cache (acceptable: predates this feature).
@@ -153,36 +146,31 @@ func PreviewShift(
 				}
 			}
 
-			local, ok := storage.(*services.LocalDiskStorage)
-			if !ok {
-				http.Error(w, "processor unavailable in this storage mode", http.StatusInternalServerError)
-				return
-			}
-			inputPath := local.FilesystemPathForLocalProcessor(local.Key(videoID, "preview.mp3"))
-
-			tmpDir, err := os.MkdirTemp("", "cantus-shift-*")
+			inKey := storage.Key(videoID, "preview.mp3")
+			outKey := storage.Key(videoID, legacyShiftedName)
+			inURL, err := storage.SignGet(ctx, inKey)
 			if err != nil {
-				log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("os.MkdirTemp failed")
-				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
+				log.Error().Err(err).Msg("storage.SignGet failed")
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "sign get failed"})
 				return
 			}
-			defer func() { _ = os.RemoveAll(tmpDir) }()
-
-			outputPath := filepath.Join(tmpDir, "shifted.mp3")
-
-			if err := processor.Shift(ctx, inputPath, outputPath, float64(n)); err != nil {
+			outURL, err := storage.SignPut(ctx, outKey)
+			if err != nil {
+				log.Error().Err(err).Msg("storage.SignPut failed")
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "sign put failed"})
+				return
+			}
+			if err := cpu.Shift(ctx, inURL, outURL, float64(n)); err != nil {
 				log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("processor.Shift failed")
 				writeJSON(w, http.StatusBadGateway, errorResponse{Error: "shift failed"})
 				return
 			}
-
-			if err := storage.Commit(ctx, storage.Key(videoID, legacyShiftedName), outputPath); err != nil {
-				log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("storage.Commit failed")
-				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage commit failed"})
+			if err := storage.Verify(ctx, outKey); err != nil {
+				log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("storage.Verify failed")
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "shift output not materialized"})
 				return
 			}
-
-			serveKey = storage.Key(videoID, legacyShiftedName)
+			serveKey = outKey
 			serveName = legacyShiftedName
 		}
 

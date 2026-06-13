@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -19,6 +18,8 @@ import (
 type JobRunner struct {
 	ytSvc     YouTubeService
 	storage   Storage
+	cpu       CPUProcessorClient
+	gpu       GPUProcessorClient
 	processor ProcessorClient
 	jobStore  *JobStore
 	semaphore chan struct{} // capacity = maxConcurrent
@@ -29,6 +30,8 @@ type JobRunner struct {
 func NewJobRunner(
 	ytSvc YouTubeService,
 	storage Storage,
+	cpu CPUProcessorClient,
+	gpu GPUProcessorClient,
 	processor ProcessorClient,
 	jobStore *JobStore,
 	maxConcurrent int,
@@ -37,10 +40,8 @@ func NewJobRunner(
 		maxConcurrent = 1
 	}
 	return &JobRunner{
-		ytSvc:     ytSvc,
-		storage:   storage,
-		processor: processor,
-		jobStore:  jobStore,
+		ytSvc: ytSvc, storage: storage, cpu: cpu, gpu: gpu,
+		processor: processor, jobStore: jobStore,
 		semaphore: make(chan struct{}, maxConcurrent),
 	}
 }
@@ -139,24 +140,26 @@ func (r *JobRunner) Run(ctx context.Context, jobID, videoID string, semitones in
 	// Stage 4: Pitch-shift the instrumental stem to the requested key.
 	r.update(jobID, models.StatusShifting, "shifting instrumental to your key")
 	shiftedName := "shifted/" + strconv.Itoa(semitones) + "/audio.mp3"
-	shiftedHas, _ := r.storage.Has(ctx, r.storage.Key(videoID, shiftedName))
+	shiftedKey := r.storage.Key(videoID, shiftedName)
+	shiftedHas, _ := r.storage.Has(ctx, shiftedKey)
 	if !shiftedHas {
-		noVocalsPath := localDisk.FilesystemPathForLocalProcessor(r.storage.Key(videoID, "no_vocals.wav"))
-
-		tmpDir, err := os.MkdirTemp("", "cantus-genshift-*")
+		noVocalsKey := r.storage.Key(videoID, "no_vocals.wav")
+		inURL, err := r.storage.SignGet(ctx, noVocalsKey)
 		if err != nil {
-			r.fail(jobID, "temp dir failed: "+err.Error())
+			r.fail(jobID, "sign get failed: "+err.Error())
 			return
 		}
-		defer func() { _ = os.RemoveAll(tmpDir) }()
-
-		tmpOut := filepath.Join(tmpDir, "audio.mp3")
-		if err := r.processor.Shift(ctx, noVocalsPath, tmpOut, float64(semitones)); err != nil {
+		outURL, err := r.storage.SignPut(ctx, shiftedKey)
+		if err != nil {
+			r.fail(jobID, "sign put failed: "+err.Error())
+			return
+		}
+		if err := r.cpu.Shift(ctx, inURL, outURL, float64(semitones)); err != nil {
 			r.fail(jobID, "shift failed: "+err.Error())
 			return
 		}
-		if err := r.storage.Commit(ctx, r.storage.Key(videoID, shiftedName), tmpOut); err != nil {
-			r.fail(jobID, "commit failed: "+err.Error())
+		if err := r.storage.Verify(ctx, shiftedKey); err != nil {
+			r.fail(jobID, "shift output not materialized: "+err.Error())
 			return
 		}
 	}

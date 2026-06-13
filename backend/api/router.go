@@ -14,7 +14,7 @@ import (
 // NewRouter builds and returns the chi router with all middleware and routes.
 // blobTokener controls whether /internal/blob/* is mounted: nil = not mounted
 // (R2 mode); non-nil = mounted (local mode, serves presigned-style blob access).
-func NewRouter(allowedOrigins []string, log zerolog.Logger, svc services.YouTubeService, signer *services.Signer, storage services.Storage, processor services.ProcessorClient, jobRunner services.JobSubmitter, jobStore *services.JobStore, blobTokener *services.BlobTokener) *chi.Mux {
+func NewRouter(allowedOrigins []string, log zerolog.Logger, svc services.YouTubeService, signer *services.Signer, storage services.Storage, processor services.ProcessorClient, cpu services.CPUProcessorClient, gpu services.GPUProcessorClient, jobRunner services.JobSubmitter, jobStore *services.JobStore, blobTokener *services.BlobTokener) *chi.Mux {
 	mux := chi.NewRouter()
 
 	mux.Use(middleware.RequestID)
@@ -31,7 +31,7 @@ func NewRouter(allowedOrigins []string, log zerolog.Logger, svc services.YouTube
 	mux.Get("/api/songs/search", handlers.Search(svc))
 	mux.Get("/api/preview/{videoId}", handlers.Preview(signer, storage, svc))
 	mux.Get("/api/preview-key/{videoId}", handlers.PreviewKey(signer, storage, svc, processor))
-	mux.Post("/api/preview-shift", handlers.PreviewShift(signer, storage, svc, processor))
+	mux.Post("/api/preview-shift", handlers.PreviewShift(signer, storage, svc, cpu))
 	mux.Post("/api/preview-stems", handlers.PreviewStems(signer, storage, svc, processor, services.FFmpegTranscode))
 	mux.Get("/api/preview-audio/{videoId}", handlers.PreviewAudio(signer, storage))
 	mux.Get("/api/preview-melody/{videoId}/{semitones}", handlers.PreviewMelody(signer, storage))

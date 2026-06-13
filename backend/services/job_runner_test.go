@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -40,13 +41,10 @@ func (f *fakeYouTubeJob) DownloadFull(_ context.Context, videoID string) error {
 type fakeProcessorJob struct {
 	separateCalls int
 	melodyCalls   int
-	shiftCalls    int
 	separateErr   error
 	melodyErr     error
-	shiftErr      error
 	separateFn    func(in, outDir string) error
 	melodyFn      func(in, out string) error
-	shiftFn       func(in, out string, semitones float64) error
 	// blockSeparate, when non-nil, is received to unblock Separate (concurrency test).
 	blockSeparate chan struct{}
 }
@@ -76,16 +74,35 @@ func (f *fakeProcessorJob) Melody(_ context.Context, vocalsPath, outputPath stri
 	return f.melodyErr
 }
 func (f *fakeProcessorJob) Shift(_ context.Context, inputPath, outputPath string, semitones float64) error {
-	f.shiftCalls++
-	if f.shiftFn != nil {
-		if err := f.shiftFn(inputPath, outputPath, semitones); err != nil {
-			return err
-		}
-	}
-	return f.shiftErr
+	return nil
 }
 
 func (f *fakeProcessorJob) PreviewKey(_ context.Context, _ string) (string, error) { return "", nil }
+
+type fakeCPUJob struct {
+	shiftFn func(ctx context.Context, in, out string, st float64) error
+	calls   []struct {
+		In, Out string
+		Semi    float64
+	}
+}
+
+func (f *fakeCPUJob) Shift(ctx context.Context, in, out string, st float64) error {
+	f.calls = append(f.calls, struct {
+		In, Out string
+		Semi    float64
+	}{in, out, st})
+	if f.shiftFn != nil {
+		return f.shiftFn(ctx, in, out, st)
+	}
+	return nil
+}
+func (f *fakeCPUJob) PreviewKey(context.Context, string) (string, error) { return "", nil }
+
+type fakeGPUJob struct{}
+
+func (f *fakeGPUJob) Separate(context.Context, string, string, string) error { return nil }
+func (f *fakeGPUJob) Melody(context.Context, string, string) error           { return nil }
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -105,6 +122,7 @@ func newTestSetup(t *testing.T, maxConcurrent int) (
 	jobStore *services.JobStore,
 	fakeYT *fakeYouTubeJob,
 	fakeProc *fakeProcessorJob,
+	fakeCPU *fakeCPUJob,
 	runner *services.JobRunner,
 ) {
 	t.Helper()
@@ -117,7 +135,8 @@ func newTestSetup(t *testing.T, maxConcurrent int) (
 	jobStore = services.NewJobStore(time.Hour)
 	fakeYT = &fakeYouTubeJob{}
 	fakeProc = &fakeProcessorJob{}
-	runner = services.NewJobRunner(fakeYT, storage, fakeProc, jobStore, maxConcurrent)
+	fakeCPU = &fakeCPUJob{}
+	runner = services.NewJobRunner(fakeYT, storage, fakeCPU, &fakeGPUJob{}, fakeProc, jobStore, maxConcurrent)
 	return
 }
 
@@ -145,6 +164,18 @@ func stageFiles(t *testing.T, storage *services.LocalDiskStorage, videoID string
 		if err := writeTestFile(p, "fake content"); err != nil {
 			t.Fatalf("writeTestFile(%q): %v", p, err)
 		}
+	}
+}
+
+// commitFile writes content to a temp file and commits it into storage under the given key.
+func commitFile(t *testing.T, storage *services.LocalDiskStorage, key, content string) {
+	t.Helper()
+	src := filepath.Join(t.TempDir(), "tmp")
+	if err := os.WriteFile(src, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := storage.Commit(context.Background(), key, src); err != nil {
+		t.Fatalf("storage.Commit(%q): %v", key, err)
 	}
 }
 
@@ -287,7 +318,7 @@ func TestJobRunner_Run(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			storage, jobStore, fakeYT, fakeProc, runner := newTestSetup(t, 1)
+			storage, jobStore, fakeYT, fakeProc, fakeCPU, runner := newTestSetup(t, 1)
 			ctx := context.Background()
 
 			// Pre-stage cache files.
@@ -299,7 +330,6 @@ func TestJobRunner_Run(t *testing.T) {
 			fakeYT.downloadFullErr = tt.downloadFullErr
 			fakeProc.separateErr = tt.separateErr
 			fakeProc.melodyErr = tt.melodyErr
-			fakeProc.shiftErr = tt.shiftErr
 
 			// Wire up side-effect fns that write fake output files.
 			if tt.writeSeparateFiles {
@@ -315,11 +345,21 @@ func TestJobRunner_Run(t *testing.T) {
 					return writeTestFile(out, `{"hop_ms":10,"frames":[]}`)
 				}
 			}
-			if tt.writeShiftFile {
-				fakeProc.shiftFn = func(in, out string, semitones float64) error {
-					return writeTestFile(out, "fake mp3 bytes")
+
+			// Wire cpu Shift: either fail or commit a file into storage so Verify passes.
+			shiftKey := storage.Key(videoID, "shifted/"+strconv.Itoa(semitones)+"/audio.mp3")
+			if tt.shiftErr != nil {
+				shiftErrVal := tt.shiftErr
+				fakeCPU.shiftFn = func(_ context.Context, _, _ string, _ float64) error {
+					return shiftErrVal
+				}
+			} else if tt.writeShiftFile {
+				fakeCPU.shiftFn = func(_ context.Context, _, _ string, _ float64) error {
+					commitFile(t, storage, shiftKey, "fake mp3 bytes")
+					return nil
 				}
 			}
+
 			// DownloadFull side effect: write original.wav so Separate stage can find it.
 			if tt.downloadFullErr == nil && tt.writeSeparateFiles {
 				fakeYT.downloadFullFn = func(vid string) error {
@@ -357,8 +397,8 @@ func TestJobRunner_Run(t *testing.T) {
 			if fakeProc.melodyCalls != tt.wantMelodyCalls {
 				t.Errorf("melodyCalls: got %d, want %d", fakeProc.melodyCalls, tt.wantMelodyCalls)
 			}
-			if fakeProc.shiftCalls != tt.wantShiftCalls {
-				t.Errorf("shiftCalls: got %d, want %d", fakeProc.shiftCalls, tt.wantShiftCalls)
+			if got := len(fakeCPU.calls); got != tt.wantShiftCalls {
+				t.Errorf("shiftCalls: got %d, want %d", got, tt.wantShiftCalls)
 			}
 
 			// On success, verify shifted file is in cache.
@@ -391,7 +431,7 @@ func containsStr(s, substr string) bool {
 // ---------------------------------------------------------------------------
 
 func TestJobRunner_Submit_RunsAsync(t *testing.T) {
-	storage, jobStore, fakeYT, fakeProc, runner := newTestSetup(t, 1)
+	storage, jobStore, fakeYT, fakeProc, fakeCPU, runner := newTestSetup(t, 1)
 	const videoID = "dQw4w9WgXcQ"
 
 	// Wire side-effect fns so pipeline can complete.
@@ -408,8 +448,10 @@ func TestJobRunner_Submit_RunsAsync(t *testing.T) {
 	fakeProc.melodyFn = func(in, out string) error {
 		return writeTestFile(out, `{}`)
 	}
-	fakeProc.shiftFn = func(in, out string, _ float64) error {
-		return writeTestFile(out, "mp3")
+	fakeCPU.shiftFn = func(_ context.Context, _, _ string, semi float64) error {
+		key := storage.Key(videoID, "shifted/"+strconv.FormatFloat(semi, 'f', -1, 64)+"/audio.mp3")
+		commitFile(t, storage, key, "mp3")
+		return nil
 	}
 
 	jobID := runner.Submit(videoID, -2)
@@ -440,8 +482,8 @@ func TestJobRunner_Submit_RunsAsync(t *testing.T) {
 	if fakeProc.melodyCalls != 1 {
 		t.Errorf("melodyCalls: got %d, want 1", fakeProc.melodyCalls)
 	}
-	if fakeProc.shiftCalls != 1 {
-		t.Errorf("shiftCalls: got %d, want 1", fakeProc.shiftCalls)
+	if got := len(fakeCPU.calls); got != 1 {
+		t.Errorf("shiftCalls: got %d, want 1", got)
 	}
 }
 
@@ -469,8 +511,9 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		ready := make(chan struct{})
 		blockSeparate := make(chan struct{})
 		fakeProc := &fakeProcessorJob{}
+		fakeCPU := &fakeCPUJob{}
 
-		runner := services.NewJobRunner(fakeYT, storage, fakeProc, jobStore, 2) // allow 2 concurrent so semaphore is not the bottleneck
+		runner := services.NewJobRunner(fakeYT, storage, fakeCPU, &fakeGPUJob{}, fakeProc, jobStore, 2) // allow 2 concurrent so semaphore is not the bottleneck
 
 		const videoID = "dedupvideo1"
 
@@ -490,8 +533,10 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		fakeProc.melodyFn = func(in, out string) error {
 			return writeTestFile(out, `{}`)
 		}
-		fakeProc.shiftFn = func(in, out string, _ float64) error {
-			return writeTestFile(out, "mp3")
+		fakeCPU.shiftFn = func(_ context.Context, _, _ string, semi float64) error {
+			key := storage.Key(videoID, "shifted/"+strconv.FormatFloat(semi, 'f', -1, 64)+"/audio.mp3")
+			commitFile(t, storage, key, "mp3")
+			return nil
 		}
 
 		// First submit — this goroutine will block in separateFn waiting for blockSeparate.
@@ -528,7 +573,7 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 	// Submit starts a fresh job with a new jobID.
 	// ---------------------------------------------------------------------------
 	t.Run("post-completion submit returns new jobID", func(t *testing.T) {
-		storage, jobStore, fakeYT, fakeProc, runner := newTestSetup(t, 1)
+		storage, jobStore, fakeYT, fakeProc, fakeCPU, runner := newTestSetup(t, 1)
 		const videoID = "dedupvideo2"
 
 		fakeYT.downloadFullFn = func(vid string) error {
@@ -544,8 +589,10 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		fakeProc.melodyFn = func(in, out string) error {
 			return writeTestFile(out, `{}`)
 		}
-		fakeProc.shiftFn = func(in, out string, _ float64) error {
-			return writeTestFile(out, "mp3")
+		fakeCPU.shiftFn = func(_ context.Context, _, _ string, semi float64) error {
+			key := storage.Key(videoID, "shifted/"+strconv.FormatFloat(semi, 'f', -1, 64)+"/audio.mp3")
+			commitFile(t, storage, key, "mp3")
+			return nil
 		}
 
 		jobID1 := runner.Submit(videoID, 0)
@@ -569,7 +616,7 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 	// follow-up Submit for the same videoID starts a new job.
 	// ---------------------------------------------------------------------------
 	t.Run("post-failure submit returns new jobID", func(t *testing.T) {
-		storage, jobStore, fakeYT, fakeProc, runner := newTestSetup(t, 1)
+		storage, jobStore, fakeYT, fakeProc, fakeCPU, runner := newTestSetup(t, 1)
 		const videoID = "dedupvideo3"
 
 		// Wire download to succeed (writes original.wav) so we reach Separate.
@@ -594,8 +641,10 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		fakeProc.melodyFn = func(in, out string) error {
 			return writeTestFile(out, `{}`)
 		}
-		fakeProc.shiftFn = func(in, out string, _ float64) error {
-			return writeTestFile(out, "mp3")
+		fakeCPU.shiftFn = func(_ context.Context, _, _ string, semi float64) error {
+			key := storage.Key(videoID, "shifted/"+strconv.FormatFloat(semi, 'f', -1, 64)+"/audio.mp3")
+			commitFile(t, storage, key, "mp3")
+			return nil
 		}
 
 		jobID2 := runner.Submit(videoID, 0)
@@ -630,8 +679,9 @@ func TestJobRunner_Submit_BoundedConcurrency(t *testing.T) {
 	// blockCh gates the Separate call — first receive blocks until close().
 	blockCh := make(chan struct{})
 	fakeProc := &fakeProcessorJob{blockSeparate: blockCh}
+	fakeCPU := &fakeCPUJob{}
 
-	runner := services.NewJobRunner(fakeYT, storage, fakeProc, jobStore, 1)
+	runner := services.NewJobRunner(fakeYT, storage, fakeCPU, &fakeGPUJob{}, fakeProc, jobStore, 1)
 
 	const vid1 = "aaaaaaaaaaa"
 	const vid2 = "bbbbbbbbbbb"
@@ -650,8 +700,16 @@ func TestJobRunner_Submit_BoundedConcurrency(t *testing.T) {
 	fakeProc.melodyFn = func(in, out string) error {
 		return writeTestFile(out, `{}`)
 	}
-	fakeProc.shiftFn = func(in, out string, _ float64) error {
-		return writeTestFile(out, "mp3")
+	fakeCPU.shiftFn = func(_ context.Context, _, _ string, semi float64) error {
+		// Can't predict which vid runs first so use a temp key based on the URL.
+		// Instead commit the shifted file for both possible video IDs.
+		for _, vid := range []string{vid1, vid2} {
+			key := storage.Key(vid, "shifted/"+strconv.FormatFloat(semi, 'f', -1, 64)+"/audio.mp3")
+			src := filepath.Join(t.TempDir(), "shifted.mp3")
+			_ = os.WriteFile(src, []byte("mp3"), 0o644)
+			_ = storage.Commit(context.Background(), key, src)
+		}
+		return nil
 	}
 
 	// Submit both jobs; capture both IDs as a set so we can check whichever runs first.

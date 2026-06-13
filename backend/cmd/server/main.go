@@ -90,16 +90,13 @@ func main() {
 		cfg.GPUProcessorURL,
 		&http.Client{Timeout: time.Duration(cfg.GPUProcessorTimeoutSeconds) * time.Second},
 	)
-	_ = cpuProc
-	_ = gpuProc
-
 	jobStore := services.NewJobStore(1 * time.Hour)
 	jobStore.StartCleanup(ctx, 5*time.Minute)
 
 	maxJobs := cfg.MaxConcurrentJobs
-	jobRunner := services.NewJobRunner(svc, storage, processor, jobStore, maxJobs)
+	jobRunner := services.NewJobRunner(svc, storage, cpuProc, gpuProc, processor, jobStore, maxJobs)
 
-	r := api.NewRouter(origins, log, svc, signer, storage, processor, jobRunner, jobStore, blobTokener)
+	r := api.NewRouter(origins, log, svc, signer, storage, processor, cpuProc, gpuProc, jobRunner, jobStore, blobTokener)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
