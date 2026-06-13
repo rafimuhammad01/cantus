@@ -183,14 +183,62 @@ func TestLocalDiskStorage_Has(t *testing.T) {
 // directories when needed.
 func TestLocalDiskStorage_Commit(t *testing.T) {
 	ctx := context.Background()
+	const wantContent = "audio bytes"
+
+	// stageSourceFile writes wantContent to a fresh temp file outside the cache
+	// root and returns its path. Used by cases that exercise the Rename path.
+	stageSourceFile := func(t *testing.T) string {
+		t.Helper()
+		srcPath := filepath.Join(t.TempDir(), "audio.mp3")
+		if err := os.WriteFile(srcPath, []byte(wantContent), 0o644); err != nil {
+			t.Fatalf("WriteFile src: %v", err)
+		}
+		return srcPath
+	}
 
 	tests := []struct {
 		name       string
 		objectName string
+		// setup runs before Commit. Returns (localPath to pass to Commit, srcPath
+		// to assert is removed after the rename, or "" to skip the source-removed check).
+		setup func(t *testing.T, s *services.LocalDiskStorage, key string) (localPath, srcPath string)
+		// extraAssert runs after the post-commit content check, for case-specific assertions.
+		extraAssert func(t *testing.T, target, srcPath string)
 	}{
-		{name: "commit moves external file into cache", objectName: "preview.mp3"},
-		{name: "commit no-op when file already at target path", objectName: "preview.mp3"},
-		{name: "commit creates parent dirs", objectName: "stems/vocals.mp3"},
+		{
+			name:       "moves external file into cache",
+			objectName: "preview.mp3",
+			setup: func(t *testing.T, _ *services.LocalDiskStorage, _ string) (string, string) {
+				src := stageSourceFile(t)
+				return src, src
+			},
+			extraAssert: func(t *testing.T, _, srcPath string) {
+				if _, err := os.Stat(srcPath); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("source file still exists at %q after Commit (expected rename)", srcPath)
+				}
+			},
+		},
+		{
+			name:       "no-op when file already at target path",
+			objectName: "preview.mp3",
+			setup: func(t *testing.T, s *services.LocalDiskStorage, key string) (string, string) {
+				target := s.FilesystemPathForLocalProcessor(key)
+				writeFileAged(t, target, wantContent, 0)
+				return target, ""
+			},
+		},
+		{
+			name:       "creates parent dirs",
+			objectName: "stems/vocals.mp3",
+			setup: func(t *testing.T, s *services.LocalDiskStorage, key string) (string, string) {
+				src := stageSourceFile(t)
+				parentDir := filepath.Dir(s.FilesystemPathForLocalProcessor(key))
+				if _, err := os.Stat(parentDir); err == nil {
+					t.Fatalf("precondition failed: parent dir %q already exists", parentDir)
+				}
+				return src, src
+			},
+		},
 	}
 
 	for i, tt := range tests {
@@ -202,76 +250,25 @@ func TestLocalDiskStorage_Commit(t *testing.T) {
 			}
 
 			videoID := "videoCommit" + string(rune('A'+i))
-			const wantContent = "audio bytes"
 			key := s.Key(videoID, tt.objectName)
 
-			switch tt.name {
-			case "commit moves external file into cache":
-				srcDir := t.TempDir()
-				srcPath := filepath.Join(srcDir, "audio.mp3")
-				if err := os.WriteFile(srcPath, []byte(wantContent), 0o644); err != nil {
-					t.Fatalf("WriteFile src: %v", err)
-				}
+			localPath, srcPath := tt.setup(t, s, key)
 
-				if err := s.Commit(ctx, key, srcPath); err != nil {
-					t.Fatalf("Commit: unexpected error: %v", err)
-				}
+			if err := s.Commit(ctx, key, localPath); err != nil {
+				t.Fatalf("Commit: unexpected error: %v", err)
+			}
 
-				target := s.FilesystemPathForLocalProcessor(key)
-				got, err := os.ReadFile(target)
-				if err != nil {
-					t.Fatalf("ReadFile target after Commit: %v", err)
-				}
-				if string(got) != wantContent {
-					t.Errorf("target content = %q, want %q", string(got), wantContent)
-				}
+			target := s.FilesystemPathForLocalProcessor(key)
+			got, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatalf("ReadFile target after Commit: %v", err)
+			}
+			if string(got) != wantContent {
+				t.Errorf("target content = %q, want %q", string(got), wantContent)
+			}
 
-				// Source must be gone (renamed, not copied).
-				if _, err := os.Stat(srcPath); !errors.Is(err, os.ErrNotExist) {
-					t.Errorf("source file still exists at %q after Commit (expected rename)", srcPath)
-				}
-
-			case "commit no-op when file already at target path":
-				target := s.FilesystemPathForLocalProcessor(key)
-				writeFileAged(t, target, wantContent, 0)
-
-				// Commit with localPath == target must not return an error.
-				if err := s.Commit(ctx, key, target); err != nil {
-					t.Fatalf("Commit (no-op): unexpected error: %v", err)
-				}
-
-				got, err := os.ReadFile(target)
-				if err != nil {
-					t.Fatalf("ReadFile after no-op Commit: %v", err)
-				}
-				if string(got) != wantContent {
-					t.Errorf("target content after no-op Commit = %q, want %q", string(got), wantContent)
-				}
-
-			case "commit creates parent dirs":
-				srcDir := t.TempDir()
-				srcPath := filepath.Join(srcDir, "audio.mp3")
-				if err := os.WriteFile(srcPath, []byte(wantContent), 0o644); err != nil {
-					t.Fatalf("WriteFile src: %v", err)
-				}
-
-				target := s.FilesystemPathForLocalProcessor(key)
-				parentDir := filepath.Dir(target)
-				if _, err := os.Stat(parentDir); err == nil {
-					t.Fatalf("precondition failed: parent dir %q already exists", parentDir)
-				}
-
-				if err := s.Commit(ctx, key, srcPath); err != nil {
-					t.Fatalf("Commit (creates parent): unexpected error: %v", err)
-				}
-
-				got, err := os.ReadFile(target)
-				if err != nil {
-					t.Fatalf("ReadFile target after Commit: %v", err)
-				}
-				if string(got) != wantContent {
-					t.Errorf("target content = %q, want %q", string(got), wantContent)
-				}
+			if tt.extraAssert != nil {
+				tt.extraAssert(t, target, srcPath)
 			}
 		})
 	}
