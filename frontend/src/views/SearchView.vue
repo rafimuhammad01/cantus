@@ -16,6 +16,10 @@ function onSearchSubmit(q: string) {
   search.runSearch(q);
 }
 
+function goHome() {
+  search.runSearch("");
+}
+
 // Set up the IntersectionObserver once we have a sentinel.
 // Watch sentinel.value because v-if hides it until we have results.
 watch(sentinel, (el) => {
@@ -64,6 +68,13 @@ onUnmounted(() => {
 
     <!-- Results state: searchbar at top, results below -->
     <div v-else class="max-w-2xl w-full mx-auto px-4 py-8">
+      <button
+        @click="goHome"
+        class="font-serif italic text-[28px] leading-none text-[var(--color-text)] hover:text-[var(--color-accent)] tracking-tight mb-6 transition-colors"
+        aria-label="Back to home"
+      >
+        cantus
+      </button>
       <div class="mb-8">
         <SearchBar @submit="onSearchSubmit" />
       </div>
