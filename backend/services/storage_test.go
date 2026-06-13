@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -348,6 +349,57 @@ func TestLocalDiskStorage_Open(t *testing.T) {
 			}
 			if string(raw) != tt.content {
 				t.Errorf("Open(%q) content = %q, want %q", key, string(raw), tt.content)
+			}
+		})
+	}
+}
+
+func TestLocalDiskStorage_SignGet_emptyWhenNoBlobConfig(t *testing.T) {
+	s, err := services.NewLocalDiskStorage(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalDiskStorage: %v", err)
+	}
+	got, err := s.SignGet(context.Background(), s.Key("abc", "x.json"))
+	if err != nil {
+		t.Fatalf("SignGet: %v", err)
+	}
+	if got != "" {
+		t.Errorf("SignGet = %q, want empty (no blob config)", got)
+	}
+}
+
+func TestLocalDiskStorage_SignGetSignPut_returnsBlobURL(t *testing.T) {
+	signer, _ := services.NewSigner(strings.Repeat("k", 32))
+	bt := services.NewBlobTokener(signer)
+	s, err := services.NewLocalDiskStorageWithBlob(t.TempDir(), "http://test", bt, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("NewLocalDiskStorageWithBlob: %v", err)
+	}
+
+	key := s.Key("abc12345678", "melody.json")
+
+	cases := []struct {
+		name string
+		sign func(context.Context, string) (string, error)
+		op   string
+	}{
+		{"SignGet", s.SignGet, "get"},
+		{"SignPut", s.SignPut, "put"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			u, err := tc.sign(context.Background(), key)
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			if !strings.HasPrefix(u, "http://test/internal/blob/abc12345678/melody.json?") {
+				t.Errorf("%s URL prefix wrong: %q", tc.name, u)
+			}
+			if !strings.Contains(u, "op="+tc.op) {
+				t.Errorf("%s URL missing op=%s: %q", tc.name, tc.op, u)
+			}
+			if !strings.Contains(u, "token=") || !strings.Contains(u, "exp=") {
+				t.Errorf("%s URL missing token/exp: %q", tc.name, u)
 			}
 		})
 	}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"time"
 )
 
 // Storage abstracts cache read/write operations so handlers never touch file paths directly.
@@ -28,7 +29,10 @@ type Storage interface {
 // Cache entries are never expired or evicted — stored files persist until
 // explicitly deleted from the filesystem (e.g. by an external lifecycle policy).
 type LocalDiskStorage struct {
-	root string
+	root        string
+	blobBaseURL string       // empty = SignGet/SignPut return ("", nil)
+	tokener     *BlobTokener // nil = SignGet/SignPut return ("", nil)
+	ttl         time.Duration
 }
 
 // NewLocalDiskStorage creates a LocalDiskStorage rooted at root.
@@ -44,6 +48,19 @@ func NewLocalDiskStorage(root string) (*LocalDiskStorage, error) {
 		return nil, fmt.Errorf("storage: Abs(%q): %w", root, err)
 	}
 	return &LocalDiskStorage{root: absRoot}, nil
+}
+
+// NewLocalDiskStorageWithBlob creates a LocalDiskStorage that can mint /internal/blob URLs.
+// The tokener and blobBaseURL are used by SignGet/SignPut to produce short-lived HMAC URLs.
+func NewLocalDiskStorageWithBlob(root, blobBaseURL string, tokener *BlobTokener, ttl time.Duration) (*LocalDiskStorage, error) {
+	s, err := NewLocalDiskStorage(root)
+	if err != nil {
+		return nil, err
+	}
+	s.blobBaseURL = blobBaseURL
+	s.tokener = tokener
+	s.ttl = ttl
+	return s, nil
 }
 
 // Key returns an opaque forward-slash-joined cache key for (videoID, name).
@@ -71,16 +88,28 @@ func (s *LocalDiskStorage) Has(_ context.Context, key string) (bool, error) {
 	return info.Size() > 0, nil
 }
 
-// SignGet returns a presigned GET URL for the given key. LocalDiskStorage has no
-// remote backing store, so it returns ("", nil) as a placeholder. Replaced in Task 4.
-func (s *LocalDiskStorage) SignGet(_ context.Context, _ string) (string, error) {
-	return "", nil
+// signURL builds a short-lived HMAC-gated /internal/blob URL for the given key and op.
+// Returns ("", nil) when no blob config is present (back-compat with NewLocalDiskStorage).
+func (s *LocalDiskStorage) signURL(key, op string) (string, error) {
+	if s.tokener == nil || s.blobBaseURL == "" {
+		return "", nil
+	}
+	exp := time.Now().Add(s.ttl)
+	token := s.tokener.Sign(key, op, exp)
+	return fmt.Sprintf("%s/internal/blob/%s?op=%s&exp=%d&token=%s",
+		s.blobBaseURL, key, op, exp.Unix(), token), nil
 }
 
-// SignPut returns a presigned PUT URL for the given key. LocalDiskStorage has no
-// remote backing store, so it returns ("", nil) as a placeholder. Replaced in Task 4.
-func (s *LocalDiskStorage) SignPut(_ context.Context, _ string) (string, error) {
-	return "", nil
+// SignGet returns a presigned GET URL for the given key. Returns ("", nil) when no
+// blob config is set (created via NewLocalDiskStorage without blob wiring).
+func (s *LocalDiskStorage) SignGet(_ context.Context, key string) (string, error) {
+	return s.signURL(key, "get")
+}
+
+// SignPut returns a presigned PUT URL for the given key. Returns ("", nil) when no
+// blob config is set (created via NewLocalDiskStorage without blob wiring).
+func (s *LocalDiskStorage) SignPut(_ context.Context, key string) (string, error) {
+	return s.signURL(key, "put")
 }
 
 // Commit moves localPath into the cache at key. If localPath is already the
