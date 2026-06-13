@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
-	"os"
 
 	"github.com/go-chi/chi/v5"
 
@@ -45,8 +45,9 @@ func PreviewKey(
 
 		ctx := r.Context()
 		log := logger.FromCtx(ctx)
+		key := storage.Key(videoID, "melody.json")
 
-		ok, err := storage.Has(ctx, videoID, "melody.json")
+		ok, err := storage.Has(ctx, key)
 		if err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has (melody.json) failed")
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage check failed"})
@@ -57,16 +58,17 @@ func PreviewKey(
 			return
 		}
 
-		path, err := storage.LocalPath(ctx, videoID, "melody.json")
+		rc, err := storage.Open(ctx, key)
 		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("storage.LocalPath (melody.json) failed")
-			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
+			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Open (melody.json) failed")
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage open failed"})
 			return
 		}
+		defer func() { _ = rc.Close() }()
 
-		data, err := os.ReadFile(path)
+		data, err := io.ReadAll(rc)
 		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("os.ReadFile (melody.json) failed")
+			log.Error().Err(err).Str("videoId", videoID).Msg("io.ReadAll (melody.json) failed")
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "melody read failed"})
 			return
 		}

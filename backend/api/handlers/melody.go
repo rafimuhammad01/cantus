@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 
@@ -80,8 +79,9 @@ func Melody(signer *services.Signer, storage services.Storage) http.HandlerFunc 
 
 		ctx := r.Context()
 		log := logger.FromCtx(ctx)
+		key := storage.Key(videoID, "melody.json")
 
-		ok, err := storage.Has(ctx, videoID, "melody.json")
+		ok, err := storage.Has(ctx, key)
 		if err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has failed")
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage check failed"})
@@ -92,23 +92,16 @@ func Melody(signer *services.Signer, storage services.Storage) http.HandlerFunc 
 			return
 		}
 
-		path, err := storage.LocalPath(ctx, videoID, "melody.json")
+		rc, err := storage.Open(ctx, key)
 		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("storage.LocalPath failed")
-			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
+			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Open failed")
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage open failed"})
 			return
 		}
-
-		f, err := os.Open(path)
-		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("os.Open failed")
-			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
-			return
-		}
-		defer func() { _ = f.Close() }()
+		defer func() { _ = rc.Close() }()
 
 		var payload melodyJSON
-		if err := json.NewDecoder(f).Decode(&payload); err != nil {
+		if err := json.NewDecoder(rc).Decode(&payload); err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Msg("melody decode failed")
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "melody parse failed"})
 			return

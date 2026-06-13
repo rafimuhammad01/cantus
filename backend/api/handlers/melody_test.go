@@ -51,7 +51,7 @@ func stageMelody(t *testing.T, storage *services.LocalDiskStorage, videoID strin
 	if err := os.WriteFile(tmp, payload, 0o644); err != nil {
 		t.Fatalf("write tmp: %v", err)
 	}
-	if err := storage.Commit(context.Background(), videoID, "melody.json", tmp); err != nil {
+	if err := storage.Commit(context.Background(), storage.Key(videoID, "melody.json"), tmp); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
 }
@@ -297,7 +297,7 @@ func TestMelodyHandler(t *testing.T) {
 				if err := os.WriteFile(tmp, previewKeyPayload, 0o644); err != nil {
 					t.Fatalf("write preview-key tmp: %v", err)
 				}
-				if err := st.Commit(context.Background(), validID, "preview-key.json", tmp); err != nil {
+				if err := st.Commit(context.Background(), st.Key(validID, "preview-key.json"), tmp); err != nil {
 					t.Fatalf("commit preview-key: %v", err)
 				}
 			},

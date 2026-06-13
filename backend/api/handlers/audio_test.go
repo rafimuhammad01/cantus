@@ -49,7 +49,7 @@ func mustStage(t *testing.T, storage *services.LocalDiskStorage, videoID, name s
 	if err := os.WriteFile(tmp, content, 0o644); err != nil {
 		t.Fatalf("write tmp: %v", err)
 	}
-	if err := storage.Commit(context.Background(), videoID, name, tmp); err != nil {
+	if err := storage.Commit(context.Background(), storage.Key(videoID, name), tmp); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
 }

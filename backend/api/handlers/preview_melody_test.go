@@ -51,7 +51,7 @@ func stagePreviewMelodyJSON(t *testing.T, storage *services.LocalDiskStorage, vi
 	if err := os.WriteFile(tmp, payload, 0o644); err != nil {
 		t.Fatalf("write tmp: %v", err)
 	}
-	if err := storage.Commit(context.Background(), videoID, "preview-stems/melody.json", tmp); err != nil {
+	if err := storage.Commit(context.Background(), storage.Key(videoID, "preview-stems/melody.json"), tmp); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
 }
@@ -64,7 +64,7 @@ func stagePreviewKeyJSON(t *testing.T, storage *services.LocalDiskStorage, video
 	if err := os.WriteFile(tmp, payload, 0o644); err != nil {
 		t.Fatalf("write preview-key tmp: %v", err)
 	}
-	if err := storage.Commit(context.Background(), videoID, "preview-key.json", tmp); err != nil {
+	if err := storage.Commit(context.Background(), storage.Key(videoID, "preview-key.json"), tmp); err != nil {
 		t.Fatalf("commit preview-key: %v", err)
 	}
 }

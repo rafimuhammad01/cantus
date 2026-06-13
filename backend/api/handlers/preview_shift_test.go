@@ -155,7 +155,7 @@ func TestPreviewShiftHandler(t *testing.T) {
 				proc := &fakeProcessor{writeBytes: []byte("fake shifted bytes")}
 				yt := &fakeYouTubeShift{
 					onDownload: func(videoID string) {
-						previewPath, _ := st.LocalPath(context.Background(), videoID, "preview.mp3")
+						previewPath := st.FilesystemPathForLocalProcessor(st.Key(videoID, "preview.mp3"))
 						_ = os.MkdirAll(filepath.Dir(previewPath), 0o755)
 						_ = os.WriteFile(previewPath, []byte("fake preview bytes"), 0o644)
 					},
@@ -177,7 +177,7 @@ func TestPreviewShiftHandler(t *testing.T) {
 			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeProcessor) {
 				st := newRealStorage(t)
 				// Pre-write preview.mp3 into storage.
-				previewPath, _ := st.LocalPath(context.Background(), validID, "preview.mp3")
+				previewPath := st.FilesystemPathForLocalProcessor(st.Key(validID, "preview.mp3"))
 				_ = os.MkdirAll(filepath.Dir(previewPath), 0o755)
 				_ = os.WriteFile(previewPath, []byte("fake preview bytes"), 0o644)
 				proc := &fakeProcessor{writeBytes: []byte("shifted +3")}
@@ -197,7 +197,7 @@ func TestPreviewShiftHandler(t *testing.T) {
 			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeProcessor) {
 				st := newRealStorage(t)
 				// Pre-write the shifted file into storage.
-				shiftedPath, _ := st.LocalPath(context.Background(), validID, "preview-shifts/-2.mp3")
+				shiftedPath := st.FilesystemPathForLocalProcessor(st.Key(validID, "preview-shifts/-2.mp3"))
 				_ = os.MkdirAll(filepath.Dir(shiftedPath), 0o755)
 				_ = os.WriteFile(shiftedPath, []byte("pre-cached shifted"), 0o644)
 				proc := &fakeProcessor{}
@@ -218,7 +218,7 @@ func TestPreviewShiftHandler(t *testing.T) {
 				proc := &fakeProcessor{writeBytes: []byte("zero shift")}
 				yt := &fakeYouTubeShift{
 					onDownload: func(videoID string) {
-						p, _ := st.LocalPath(context.Background(), videoID, "preview.mp3")
+						p := st.FilesystemPathForLocalProcessor(st.Key(videoID, "preview.mp3"))
 						_ = os.MkdirAll(filepath.Dir(p), 0o755)
 						_ = os.WriteFile(p, []byte("fake preview"), 0o644)
 					},
@@ -323,7 +323,7 @@ func TestPreviewShiftHandler(t *testing.T) {
 			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeProcessor) {
 				st := newRealStorage(t)
 				// Pre-write preview so DownloadPreview is skipped.
-				p, _ := st.LocalPath(context.Background(), validID, "preview.mp3")
+				p := st.FilesystemPathForLocalProcessor(st.Key(validID, "preview.mp3"))
 				_ = os.MkdirAll(filepath.Dir(p), 0o755)
 				_ = os.WriteFile(p, []byte("preview"), 0o644)
 				proc := &fakeProcessor{err: errors.New("ffmpeg died")}
@@ -344,7 +344,7 @@ func TestPreviewShiftHandler(t *testing.T) {
 			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeProcessor) {
 				st := newRealStorage(t)
 				// Pre-write the stem-shifted file.
-				p, _ := st.LocalPath(context.Background(), validID, "preview-stems/shifted/-3.mp3")
+				p := st.FilesystemPathForLocalProcessor(st.Key(validID, "preview-stems/shifted/-3.mp3"))
 				_ = os.MkdirAll(filepath.Dir(p), 0o755)
 				_ = os.WriteFile(p, []byte("stem shifted cached"), 0o644)
 				return st, &fakeYouTubeShift{}, &fakeProcessor{}
@@ -361,7 +361,7 @@ func TestPreviewShiftHandler(t *testing.T) {
 			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeProcessor) {
 				st := newRealStorage(t)
 				// Pre-write legacy shifted, no stem-shifted file.
-				p, _ := st.LocalPath(context.Background(), validID, "preview-shifts/5.mp3")
+				p := st.FilesystemPathForLocalProcessor(st.Key(validID, "preview-shifts/5.mp3"))
 				_ = os.MkdirAll(filepath.Dir(p), 0o755)
 				_ = os.WriteFile(p, []byte("legacy shifted cached"), 0o644)
 				return st, &fakeYouTubeShift{}, &fakeProcessor{}
@@ -383,10 +383,10 @@ func TestPreviewShiftHandler(t *testing.T) {
 			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeProcessor) {
 				st := newRealStorage(t)
 				// Pre-write BOTH: stem WAV (new) and legacy shifted (stale chipmunk).
-				stemP, _ := st.LocalPath(context.Background(), validID, "preview-stems/no_vocals.wav")
+				stemP := st.FilesystemPathForLocalProcessor(st.Key(validID, "preview-stems/no_vocals.wav"))
 				_ = os.MkdirAll(filepath.Dir(stemP), 0o755)
 				_ = os.WriteFile(stemP, []byte("stem wav bytes"), 0o644)
-				legacyP, _ := st.LocalPath(context.Background(), validID, "preview-shifts/-5.mp3")
+				legacyP := st.FilesystemPathForLocalProcessor(st.Key(validID, "preview-shifts/-5.mp3"))
 				_ = os.MkdirAll(filepath.Dir(legacyP), 0o755)
 				_ = os.WriteFile(legacyP, []byte("STALE LEGACY CHIPMUNK"), 0o644)
 				proc := &fakeProcessor{writeBytes: []byte("fresh clean stem shift")}
@@ -407,7 +407,7 @@ func TestPreviewShiftHandler(t *testing.T) {
 			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeProcessor) {
 				st := newRealStorage(t)
 				// Pre-write the stem WAV only.
-				p, _ := st.LocalPath(context.Background(), validID, "preview-stems/no_vocals.wav")
+				p := st.FilesystemPathForLocalProcessor(st.Key(validID, "preview-stems/no_vocals.wav"))
 				_ = os.MkdirAll(filepath.Dir(p), 0o755)
 				_ = os.WriteFile(p, []byte("stem wav bytes"), 0o644)
 				proc := &fakeProcessor{writeBytes: []byte("stem shifted output")}
@@ -430,7 +430,7 @@ func TestPreviewShiftHandler(t *testing.T) {
 				proc := &fakeProcessor{writeBytes: []byte("legacy fallback output")}
 				yt := &fakeYouTubeShift{
 					onDownload: func(videoID string) {
-						pp, _ := st.LocalPath(context.Background(), videoID, "preview.mp3")
+						pp := st.FilesystemPathForLocalProcessor(st.Key(videoID, "preview.mp3"))
 						_ = os.MkdirAll(filepath.Dir(pp), 0o755)
 						_ = os.WriteFile(pp, []byte("preview bytes"), 0o644)
 					},
@@ -507,7 +507,7 @@ func TestPreviewShiftHandler(t *testing.T) {
 
 			if tt.wantCached != "" {
 				if realSt, ok := st.(*services.LocalDiskStorage); ok {
-					ok2, err := realSt.Has(context.Background(), validID, tt.wantCached)
+					ok2, err := realSt.Has(context.Background(), realSt.Key(validID, tt.wantCached))
 					if err != nil {
 						t.Errorf("storage.Has after request: %v", err)
 					} else if !ok2 {
@@ -542,7 +542,7 @@ func TestPreviewShiftHandler_RangeRequest(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			st := newRealStorage(t)
 			// Pre-cache the shifted file.
-			shiftedPath, _ := st.LocalPath(context.Background(), validID, "preview-shifts/-2.mp3")
+			shiftedPath := st.FilesystemPathForLocalProcessor(st.Key(validID, "preview-shifts/-2.mp3"))
 			_ = os.MkdirAll(filepath.Dir(shiftedPath), 0o755)
 			_ = os.WriteFile(shiftedPath, []byte("hello world full"), 0o644)
 

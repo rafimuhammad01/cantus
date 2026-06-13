@@ -76,17 +76,19 @@ func (f *fakeYouTubeStems) DownloadPreview(_ context.Context, videoID string) er
 func (f *fakeYouTubeStems) DownloadFull(_ context.Context, _ string) error { return nil }
 
 // errStorage wraps a real LocalDiskStorage but returns an error on Has for a
-// specific (videoID, name) pair, used to test 500 paths.
+// specific key suffix, used to test 500 paths. errOnHasName is matched against
+// the tail of the key (i.e. the "name" portion after the videoID prefix).
 type errStorage struct {
 	services.Storage
-	errOnHasName string // if non-empty, Has returns an error when name matches
+	errOnHasName string // if non-empty, Has returns an error when the key ends with this
 }
 
-func (e *errStorage) Has(ctx context.Context, videoID, name string) (bool, error) {
-	if e.errOnHasName != "" && name == e.errOnHasName {
+func (e *errStorage) Has(ctx context.Context, key string) (bool, error) {
+	if e.errOnHasName != "" && len(key) >= len(e.errOnHasName) &&
+		key[len(key)-len(e.errOnHasName):] == e.errOnHasName {
 		return false, errors.New("storage exploded")
 	}
-	return e.Storage.Has(ctx, videoID, name)
+	return e.Storage.Has(ctx, key)
 }
 
 // newStemsStorage returns a LocalDiskStorage rooted at a temp dir.
@@ -143,10 +145,7 @@ func makeFakeTranscode(writeContent []byte, err error) (services.TranscodeFunc, 
 // preStagePreview writes a dummy preview.mp3 into storage for the given videoID.
 func preStagePreview(t *testing.T, st *services.LocalDiskStorage, videoID string) {
 	t.Helper()
-	p, err := st.LocalPath(context.Background(), videoID, "preview.mp3")
-	if err != nil {
-		t.Fatalf("LocalPath preview.mp3: %v", err)
-	}
+	p := st.FilesystemPathForLocalProcessor(st.Key(videoID, "preview.mp3"))
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -159,7 +158,7 @@ func preStagePreview(t *testing.T, st *services.LocalDiskStorage, videoID string
 func preStageStems(t *testing.T, st *services.LocalDiskStorage, videoID string) {
 	t.Helper()
 	for _, name := range []string{"preview-stems/vocals.wav", "preview-stems/no_vocals.wav"} {
-		p, _ := st.LocalPath(context.Background(), videoID, name)
+		p := st.FilesystemPathForLocalProcessor(st.Key(videoID, name))
 		_ = os.MkdirAll(filepath.Dir(p), 0o755)
 		if err := os.WriteFile(p, []byte("fake wav"), 0o644); err != nil {
 			t.Fatalf("WriteFile %s: %v", name, err)
@@ -170,7 +169,7 @@ func preStageStems(t *testing.T, st *services.LocalDiskStorage, videoID string) 
 // preStageMp3 writes a dummy no_vocals.mp3 into storage.
 func preStageMp3(t *testing.T, st *services.LocalDiskStorage, videoID string) {
 	t.Helper()
-	p, _ := st.LocalPath(context.Background(), videoID, "preview-stems/no_vocals.mp3")
+	p := st.FilesystemPathForLocalProcessor(st.Key(videoID, "preview-stems/no_vocals.mp3"))
 	_ = os.MkdirAll(filepath.Dir(p), 0o755)
 	_ = os.WriteFile(p, []byte("fake mp3"), 0o644)
 }
@@ -178,7 +177,7 @@ func preStageMp3(t *testing.T, st *services.LocalDiskStorage, videoID string) {
 // preStageMelody writes a dummy melody.json into storage.
 func preStageMelody(t *testing.T, st *services.LocalDiskStorage, videoID string) {
 	t.Helper()
-	p, _ := st.LocalPath(context.Background(), videoID, "preview-stems/melody.json")
+	p := st.FilesystemPathForLocalProcessor(st.Key(videoID, "preview-stems/melody.json"))
 	_ = os.MkdirAll(filepath.Dir(p), 0o755)
 	_ = os.WriteFile(p, []byte(`{"notes":[]}`), 0o644)
 }
@@ -461,7 +460,7 @@ func TestPreviewStemsHandler(t *testing.T) {
 
 			for _, name := range tt.wantCached {
 				if realSt, ok := st.(*services.LocalDiskStorage); ok {
-					ok2, err := realSt.Has(context.Background(), validID, name)
+					ok2, err := realSt.Has(context.Background(), realSt.Key(validID, name))
 					if err != nil {
 						t.Errorf("storage.Has(%q) after request: %v", name, err)
 					} else if !ok2 {

@@ -50,7 +50,7 @@ func stagePreviewAudioMp3(t *testing.T, storage *services.LocalDiskStorage, vide
 	if err := os.WriteFile(tmp, content, 0o644); err != nil {
 		t.Fatalf("write tmp: %v", err)
 	}
-	if err := storage.Commit(context.Background(), videoID, "preview-stems/no_vocals.mp3", tmp); err != nil {
+	if err := storage.Commit(context.Background(), storage.Key(videoID, "preview-stems/no_vocals.mp3"), tmp); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
 }

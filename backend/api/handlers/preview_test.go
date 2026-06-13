@@ -18,27 +18,36 @@ import (
 )
 
 // fakeStorage is a test double for services.Storage.
+// It delegates Open to a real LocalDiskStorage when openPath is set, so
+// handlers that call storage.Open after a cache-hit can serve the file.
 type fakeStorage struct {
-	hasResult    bool
-	hasErr       error
-	hasCalled    int
-	localPathVal string
-	localPathErr error
+	hasResult bool
+	hasErr    error
+	hasCalled int
+	openPath  string // if non-empty, Open returns an os.File for this path
+	openErr   error
 }
 
-func (f *fakeStorage) Has(_ context.Context, _, _ string) (bool, error) {
+func (f *fakeStorage) Key(_, name string) string { return name }
+
+func (f *fakeStorage) Has(_ context.Context, _ string) (bool, error) {
 	f.hasCalled++
 	return f.hasResult, f.hasErr
 }
 
-func (f *fakeStorage) LocalPath(_ context.Context, _, _ string) (string, error) {
-	return f.localPathVal, f.localPathErr
-}
+func (f *fakeStorage) SignGet(_ context.Context, _ string) (string, error) { return "", nil }
+func (f *fakeStorage) SignPut(_ context.Context, _ string) (string, error) { return "", nil }
 
-func (f *fakeStorage) Commit(_ context.Context, _, _, _ string) error { return nil }
+func (f *fakeStorage) Commit(_ context.Context, _, _ string) error { return nil }
 
-func (f *fakeStorage) Open(_ context.Context, _, _ string) (io.ReadCloser, error) {
-	return nil, errors.New("not implemented in fake")
+func (f *fakeStorage) Open(_ context.Context, _ string) (io.ReadCloser, error) {
+	if f.openErr != nil {
+		return nil, f.openErr
+	}
+	if f.openPath != "" {
+		return os.Open(f.openPath)
+	}
+	return nil, errors.New("fakeStorage: Open not configured")
 }
 
 // fakeYouTubePreview is a test double for the preview-relevant parts of YouTubeService.
@@ -160,8 +169,8 @@ func TestPreviewHandler(t *testing.T) {
 			name: "cache hit happy path",
 			url:  "/api/preview/" + validID + "?sig=" + validSig,
 			storage: &fakeStorage{
-				hasResult:    true,
-				localPathVal: cacheFile,
+				hasResult: true,
+				openPath:  cacheFile,
 			},
 			svc:                &fakeYouTubePreview{},
 			wantStatus:         http.StatusOK,
@@ -172,19 +181,9 @@ func TestPreviewHandler(t *testing.T) {
 		{
 			name: "cache miss — download — serve",
 			url:  "/api/preview/" + validID + "?sig=" + validSig,
-			storage: func() *fakeStorage {
-				dir := t.TempDir()
-				path := filepath.Join(dir, "preview.mp3")
-				s := &fakeStorage{
-					hasResult:    false,
-					localPathVal: path,
-				}
-				return s
-			}(),
-			svc: func() *fakeYouTubePreview {
-				// We need the path from the storage fake; build both together below.
-				return nil // replaced below
-			}(),
+			// storage and svc built together below so they share the missPath.
+			storage:             nil,
+			svc:                 nil,
 			wantStatus:          http.StatusOK,
 			wantBody:            "downloaded mp3",
 			wantHasCalled:       1,
@@ -219,8 +218,8 @@ func TestPreviewHandler(t *testing.T) {
 			name: "range request — 206 partial content",
 			url:  "/api/preview/" + validID + "?sig=" + validSig,
 			storage: &fakeStorage{
-				hasResult:    true,
-				localPathVal: cacheFile,
+				hasResult: true,
+				openPath:  cacheFile,
 			},
 			svc:                &fakeYouTubePreview{},
 			wantStatus:         http.StatusPartialContent,
@@ -229,7 +228,8 @@ func TestPreviewHandler(t *testing.T) {
 		},
 	}
 
-	// Build the cache-miss test case properly so the fakeStorage and fakeYouTubePreview share a path.
+	// Build the cache-miss test case: fakeStorage and fakeYouTubePreview must share
+	// the same path so the download callback writes the file that Open will return.
 	missingIdx := -1
 	for i, tt := range tests {
 		if tt.name == "cache miss — download — serve" {
@@ -238,15 +238,14 @@ func TestPreviewHandler(t *testing.T) {
 		}
 	}
 	if missingIdx >= 0 {
-		missDir := t.TempDir()
-		missPath := filepath.Join(missDir, "preview.mp3")
+		missPath := filepath.Join(t.TempDir(), "preview.mp3")
 		missStorage := &fakeStorage{
-			hasResult:    false,
-			localPathVal: missPath,
+			hasResult: false,
+			openPath:  missPath,
 		}
 		missSvc := &fakeYouTubePreview{
 			onDownload: func(_ string) {
-				// Simulate the real DownloadPreview: write the file to the path LocalPath will return.
+				// Simulate the real DownloadPreview: write the file so Open can serve it.
 				_ = os.WriteFile(missPath, []byte("downloaded mp3"), 0o600)
 			},
 		}

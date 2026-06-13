@@ -100,7 +100,7 @@ func TestLocalDiskStorage_HasOpenCommit_byKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: unexpected error: %v", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	body, err := io.ReadAll(rc)
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)

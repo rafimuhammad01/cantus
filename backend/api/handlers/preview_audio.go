@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"bytes"
+	"io"
 	"net/http"
-	"os"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -33,8 +35,9 @@ func PreviewAudio(signer *services.Signer, storage services.Storage) http.Handle
 		log := logger.FromCtx(ctx)
 
 		const name = "preview-stems/no_vocals.mp3"
+		key := storage.Key(videoID, name)
 
-		ok, err := storage.Has(ctx, videoID, name)
+		ok, err := storage.Has(ctx, key)
 		if err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has failed")
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage check failed"})
@@ -47,28 +50,22 @@ func PreviewAudio(signer *services.Signer, storage services.Storage) http.Handle
 			return
 		}
 
-		path, err := storage.LocalPath(ctx, videoID, name)
+		rc, err := storage.Open(ctx, key)
 		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("storage.LocalPath failed")
-			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
+			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Open failed")
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage open failed"})
+			return
+		}
+		defer func() { _ = rc.Close() }()
+
+		// Beta scale; bounded MP3 sizes. Streaming Range from R2 can come later if profiling shows memory pressure.
+		buf, err := io.ReadAll(rc)
+		if err != nil {
+			log.Error().Err(err).Str("videoId", videoID).Msg("io.ReadAll failed")
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage read failed"})
 			return
 		}
 
-		f, err := os.Open(path)
-		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("os.Open failed")
-			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
-			return
-		}
-		defer func() { _ = f.Close() }()
-
-		info, err := f.Stat()
-		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("file.Stat failed")
-			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
-			return
-		}
-
-		http.ServeContent(w, r, "no_vocals.mp3", info.ModTime(), f)
+		http.ServeContent(w, r, "no_vocals.mp3", time.Now(), bytes.NewReader(buf))
 	}
 }

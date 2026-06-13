@@ -99,7 +99,7 @@ func TestPreviewKeyHandler(t *testing.T) {
 			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey) {
 				st := newKeyStorage(t)
 				// Pre-stage melody.json (CREPE on isolated full-song vocals — the one accurate source).
-				melodyPath, _ := st.LocalPath(context.Background(), validID, "melody.json")
+				melodyPath := st.FilesystemPathForLocalProcessor(st.Key(validID, "melody.json"))
 				_ = os.MkdirAll(filepath.Dir(melodyPath), 0o755)
 				_ = os.WriteFile(melodyPath, []byte(`{"key":"F major"}`), 0o644)
 				return st, &fakeYouTubeKey{}, &fakeProcKey{}
@@ -126,7 +126,7 @@ func TestPreviewKeyHandler(t *testing.T) {
 			url:  "/api/preview-key/" + validID + "?sig=" + validSig,
 			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey) {
 				st := newKeyStorage(t)
-				melodyPath, _ := st.LocalPath(context.Background(), validID, "melody.json")
+				melodyPath := st.FilesystemPathForLocalProcessor(st.Key(validID, "melody.json"))
 				_ = os.MkdirAll(filepath.Dir(melodyPath), 0o755)
 				_ = os.WriteFile(melodyPath, []byte(`{"key":""}`), 0o644)
 				return st, &fakeYouTubeKey{}, &fakeProcKey{}
@@ -174,7 +174,7 @@ func TestPreviewKeyHandler(t *testing.T) {
 			url:  "/api/preview-key/" + validID + "?sig=" + validSig,
 			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey) {
 				st := newKeyStorage(t)
-				melodyPath, _ := st.LocalPath(context.Background(), validID, "melody.json")
+				melodyPath := st.FilesystemPathForLocalProcessor(st.Key(validID, "melody.json"))
 				_ = os.MkdirAll(filepath.Dir(melodyPath), 0o755)
 				_ = os.WriteFile(melodyPath, []byte(`not-json{`), 0o644)
 				return st, &fakeYouTubeKey{}, &fakeProcKey{}
@@ -228,7 +228,7 @@ func TestPreviewKeyHandler(t *testing.T) {
 			}
 
 			if tt.wantCachedAfter && rec.Code == http.StatusOK {
-				ok, err := st.Has(context.Background(), validID, "preview-key.json")
+				ok, err := st.Has(context.Background(), st.Key(validID, "preview-key.json"))
 				if err != nil {
 					t.Errorf("storage.Has(preview-key.json) after request: %v", err)
 				} else if !ok {

@@ -48,13 +48,13 @@ func PreviewStems(
 		videoID := req.VideoID
 
 		// Idempotent early-exit: both final outputs already cached → nothing to do.
-		mp3Has, err := storage.Has(ctx, videoID, "preview-stems/no_vocals.mp3")
+		mp3Has, err := storage.Has(ctx, storage.Key(videoID, "preview-stems/no_vocals.mp3"))
 		if err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has (no_vocals.mp3) failed")
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage check failed"})
 			return
 		}
-		melodyHas, err := storage.Has(ctx, videoID, "preview-stems/melody.json")
+		melodyHas, err := storage.Has(ctx, storage.Key(videoID, "preview-stems/melody.json"))
 		if err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has (melody.json) failed")
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage check failed"})
@@ -68,7 +68,7 @@ func PreviewStems(
 		}
 
 		// Stage 1 — ensure preview.mp3 exists.
-		previewHas, err := storage.Has(ctx, videoID, "preview.mp3")
+		previewHas, err := storage.Has(ctx, storage.Key(videoID, "preview.mp3"))
 		if err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has (preview.mp3) failed")
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage check failed"})
@@ -84,35 +84,31 @@ func PreviewStems(
 
 		// Stage 2 — ensure preview-stems/{vocals,no_vocals}.wav.
 		// Both must be present; if either is missing re-run Demucs so the pair is consistent.
-		vocalsHas, err := storage.Has(ctx, videoID, "preview-stems/vocals.wav")
+		vocalsHas, err := storage.Has(ctx, storage.Key(videoID, "preview-stems/vocals.wav"))
 		if err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has (vocals.wav) failed")
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage check failed"})
 			return
 		}
-		noVocalsWavHas, err := storage.Has(ctx, videoID, "preview-stems/no_vocals.wav")
+		noVocalsWavHas, err := storage.Has(ctx, storage.Key(videoID, "preview-stems/no_vocals.wav"))
 		if err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has (no_vocals.wav) failed")
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage check failed"})
 			return
 		}
 		if !vocalsHas || !noVocalsWavHas {
-			previewPath, err := storage.LocalPath(ctx, videoID, "preview.mp3")
-			if err != nil {
-				log.Error().Err(err).Str("videoId", videoID).Msg("storage.LocalPath (preview.mp3) failed")
-				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
+			local, ok := storage.(*services.LocalDiskStorage)
+			if !ok {
+				http.Error(w, "processor unavailable in this storage mode", http.StatusInternalServerError)
 				return
 			}
 
+			previewPath := local.FilesystemPathForLocalProcessor(local.Key(videoID, "preview.mp3"))
+
 			// Resolve the stems output directory from the sentinel path so Demucs
 			// writes vocals.wav + no_vocals.wav directly into preview-stems/.
-			sentinelPath, err := storage.LocalPath(ctx, videoID, "preview-stems/vocals.wav")
-			if err != nil {
-				log.Error().Err(err).Str("videoId", videoID).Msg("storage.LocalPath (sentinel) failed")
-				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
-				return
-			}
-			outputDir := filepath.Dir(sentinelPath)
+			sentinelKey := local.Key(videoID, "preview-stems/vocals.wav")
+			outputDir := filepath.Dir(local.FilesystemPathForLocalProcessor(sentinelKey))
 
 			// Create the directory before Demucs runs; it doesn't create parents.
 			if err := os.MkdirAll(outputDir, 0o755); err != nil {
@@ -130,12 +126,13 @@ func PreviewStems(
 
 		// Stage 3 — ensure preview-stems/no_vocals.mp3 (ffmpeg transcode of no_vocals.wav).
 		if !mp3Has {
-			noVocalsWav, err := storage.LocalPath(ctx, videoID, "preview-stems/no_vocals.wav")
-			if err != nil {
-				log.Error().Err(err).Str("videoId", videoID).Msg("storage.LocalPath (no_vocals.wav) failed")
-				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
+			local, ok := storage.(*services.LocalDiskStorage)
+			if !ok {
+				http.Error(w, "processor unavailable in this storage mode", http.StatusInternalServerError)
 				return
 			}
+
+			noVocalsWav := local.FilesystemPathForLocalProcessor(local.Key(videoID, "preview-stems/no_vocals.wav"))
 
 			tmpDir, err := os.MkdirTemp("", "cantus-preview-transcode-*")
 			if err != nil {
@@ -153,7 +150,7 @@ func PreviewStems(
 				return
 			}
 
-			if err := storage.Commit(ctx, videoID, "preview-stems/no_vocals.mp3", tmpMp3); err != nil {
+			if err := storage.Commit(ctx, storage.Key(videoID, "preview-stems/no_vocals.mp3"), tmpMp3); err != nil {
 				log.Error().Err(err).Str("videoId", videoID).Msg("storage.Commit (no_vocals.mp3) failed")
 				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage commit failed"})
 				return
@@ -162,18 +159,14 @@ func PreviewStems(
 
 		// Stage 4 — ensure preview-stems/melody.json.
 		if !melodyHas {
-			vocalsPath, err := storage.LocalPath(ctx, videoID, "preview-stems/vocals.wav")
-			if err != nil {
-				log.Error().Err(err).Str("videoId", videoID).Msg("storage.LocalPath (vocals.wav) failed")
-				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
+			local, ok := storage.(*services.LocalDiskStorage)
+			if !ok {
+				http.Error(w, "processor unavailable in this storage mode", http.StatusInternalServerError)
 				return
 			}
-			melodyPath, err := storage.LocalPath(ctx, videoID, "preview-stems/melody.json")
-			if err != nil {
-				log.Error().Err(err).Str("videoId", videoID).Msg("storage.LocalPath (melody.json) failed")
-				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
-				return
-			}
+
+			vocalsPath := local.FilesystemPathForLocalProcessor(local.Key(videoID, "preview-stems/vocals.wav"))
+			melodyPath := local.FilesystemPathForLocalProcessor(local.Key(videoID, "preview-stems/melody.json"))
 			if err := processor.Melody(ctx, vocalsPath, melodyPath); err != nil {
 				log.Error().Err(err).Str("videoId", videoID).Msg("processor.Melody failed")
 				writeJSON(w, http.StatusBadGateway, errorResponse{Error: "melody failed"})

@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"os"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -45,8 +44,9 @@ func PreviewMelody(signer *services.Signer, storage services.Storage) http.Handl
 		log := logger.FromCtx(ctx)
 
 		const name = "preview-stems/melody.json"
+		key := storage.Key(videoID, name)
 
-		ok, err := storage.Has(ctx, videoID, name)
+		ok, err := storage.Has(ctx, key)
 		if err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has failed")
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage check failed"})
@@ -57,23 +57,16 @@ func PreviewMelody(signer *services.Signer, storage services.Storage) http.Handl
 			return
 		}
 
-		path, err := storage.LocalPath(ctx, videoID, name)
+		rc, err := storage.Open(ctx, key)
 		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("storage.LocalPath failed")
-			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
+			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Open failed")
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage open failed"})
 			return
 		}
-
-		f, err := os.Open(path)
-		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("os.Open failed")
-			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
-			return
-		}
-		defer func() { _ = f.Close() }()
+		defer func() { _ = rc.Close() }()
 
 		var payload melodyJSON
-		if err := json.NewDecoder(f).Decode(&payload); err != nil {
+		if err := json.NewDecoder(rc).Decode(&payload); err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Msg("melody decode failed")
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "melody parse failed"})
 			return

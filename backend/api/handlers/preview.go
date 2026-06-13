@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"bytes"
+	"io"
 	"net/http"
-	"os"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -26,8 +28,9 @@ func Preview(signer *services.Signer, storage services.Storage, svc services.You
 		}
 
 		log := logger.FromCtx(r.Context())
+		key := storage.Key(videoID, "preview.mp3")
 
-		ok, err := storage.Has(r.Context(), videoID, "preview.mp3")
+		ok, err := storage.Has(r.Context(), key)
 		if err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has failed")
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage check failed"})
@@ -42,28 +45,22 @@ func Preview(signer *services.Signer, storage services.Storage, svc services.You
 			}
 		}
 
-		path, err := storage.LocalPath(r.Context(), videoID, "preview.mp3")
+		rc, err := storage.Open(r.Context(), key)
 		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("storage.LocalPath failed")
-			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
+			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Open failed")
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage open failed"})
+			return
+		}
+		defer func() { _ = rc.Close() }()
+
+		// Beta scale; bounded MP3 sizes. Streaming Range from R2 can come later if profiling shows memory pressure.
+		buf, err := io.ReadAll(rc)
+		if err != nil {
+			log.Error().Err(err).Str("videoId", videoID).Msg("io.ReadAll failed")
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage read failed"})
 			return
 		}
 
-		f, err := os.Open(path)
-		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("os.Open failed")
-			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
-			return
-		}
-		defer func() { _ = f.Close() }()
-
-		info, err := f.Stat()
-		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("file.Stat failed")
-			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
-			return
-		}
-
-		http.ServeContent(w, r, "preview.mp3", info.ModTime(), f)
+		http.ServeContent(w, r, "preview.mp3", time.Now(), bytes.NewReader(buf))
 	}
 }
