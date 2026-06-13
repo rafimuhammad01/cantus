@@ -122,6 +122,11 @@ watch(routeSemitones, async (next) => {
   sse.close();
   player.jobStatus = "idle";
   player.jobMessage = "";
+  // Clear stale melody — PitchDiagram captures props.melody at setup, so if it
+  // mounts with a melody from a previous semitones value, the target line stays
+  // wrong even after loadDoneArtifacts replaces player.melody. Forcing null gates
+  // PitchDiagram on the fresh fetch.
+  player.melody = null;
   try {
     await player.startGenerate();
     startSSE();
@@ -147,12 +152,23 @@ onMounted(() => {
       player.jobStatus === "melody" ||
       player.jobStatus === "shifting")
   ) {
+    // Clear melody left over from PreviewView's loadFullMelodyIfAvailable —
+    // it was fetched at the previous semitones and would leak into PitchDiagram
+    // before loadDoneArtifacts replaces it (PitchDiagram captures props.melody
+    // at setup, doesn't re-read on prop change).
+    player.melody = null;
     startSSE();
   } else if (player.jobStatus === "done") {
     // Came back to a done state — load artifacts.
+    player.melody = null;
     loadDoneArtifacts();
   } else {
     // Cold start — kick the generate.
+    // Clear any melody loaded for a different semitones value in PreviewView
+    // (loadFullMelodyIfAvailable runs at player.semitones=0 on entry) so
+    // PitchDiagram waits for the fresh fetch instead of mounting on a stale
+    // melody whose targetSeries it'd capture at setup.
+    player.melody = null;
     (async () => {
       try {
         await player.startGenerate();
@@ -220,8 +236,8 @@ onUnmounted(() => {
               :current="player.vocalOctaveShift"
               :disabled="player.jobStatus !== 'done'"
               :range="
-                player.vocalRange
-                  ? `${midiToNoteName(player.vocalRange.minMidi)} – ${midiToNoteName(player.vocalRange.maxMidi)}`
+                fullVocalRange
+                  ? `${midiToNoteName(fullVocalRange.minMidi)} – ${midiToNoteName(fullVocalRange.maxMidi)}`
                   : undefined
               "
               @change="player.setVocalOctaveShift"
