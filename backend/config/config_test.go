@@ -163,6 +163,144 @@ func TestLoad_LogLevel(t *testing.T) {
 	}
 }
 
+// TestLoad_storageBackend_local_defaults verifies that STORAGE_BACKEND=local
+// populates the BlobBaseURL default.
+func TestLoad_storageBackend_local_defaults(t *testing.T) {
+	t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
+	t.Setenv("STORAGE_BACKEND", "local")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StorageBackend != "local" {
+		t.Errorf("StorageBackend = %q, want %q", cfg.StorageBackend, "local")
+	}
+	if cfg.BlobBaseURL != "http://localhost:8080" {
+		t.Errorf("BlobBaseURL = %q, want default", cfg.BlobBaseURL)
+	}
+}
+
+// TestLoad_storageBackend_default_isLocal verifies that omitting STORAGE_BACKEND
+// defaults to "local".
+func TestLoad_storageBackend_default_isLocal(t *testing.T) {
+	t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StorageBackend != "local" {
+		t.Errorf("default StorageBackend = %q, want %q", cfg.StorageBackend, "local")
+	}
+}
+
+// TestLoad_storageBackend_r2_requiresR2Fields verifies that each required R2
+// env var is validated when STORAGE_BACKEND=r2.
+func TestLoad_storageBackend_r2_requiresR2Fields(t *testing.T) {
+	cases := []struct {
+		name    string
+		setup   func(t *testing.T)
+		missing string
+	}{
+		{
+			name: "missing account id",
+			setup: func(t *testing.T) {
+				t.Setenv("R2_ACCESS_KEY_ID", "k")
+				t.Setenv("R2_SECRET_ACCESS_KEY", "s")
+				t.Setenv("R2_BUCKET", "b")
+			},
+			missing: "R2_ACCOUNT_ID",
+		},
+		{
+			name: "missing access key",
+			setup: func(t *testing.T) {
+				t.Setenv("R2_ACCOUNT_ID", "a")
+				t.Setenv("R2_SECRET_ACCESS_KEY", "s")
+				t.Setenv("R2_BUCKET", "b")
+			},
+			missing: "R2_ACCESS_KEY_ID",
+		},
+		{
+			name: "missing secret",
+			setup: func(t *testing.T) {
+				t.Setenv("R2_ACCOUNT_ID", "a")
+				t.Setenv("R2_ACCESS_KEY_ID", "k")
+				t.Setenv("R2_BUCKET", "b")
+			},
+			missing: "R2_SECRET_ACCESS_KEY",
+		},
+		{
+			name: "missing bucket",
+			setup: func(t *testing.T) {
+				t.Setenv("R2_ACCOUNT_ID", "a")
+				t.Setenv("R2_ACCESS_KEY_ID", "k")
+				t.Setenv("R2_SECRET_ACCESS_KEY", "s")
+			},
+			missing: "R2_BUCKET",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
+			t.Setenv("STORAGE_BACKEND", "r2")
+			tc.setup(t)
+			_, err := config.Load()
+			if err == nil {
+				t.Fatalf("Load: want error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.missing) {
+				t.Errorf("error %q does not mention %q", err.Error(), tc.missing)
+			}
+		})
+	}
+}
+
+// TestLoad_storageBackend_r2_complete verifies that a fully-configured r2
+// backend loads all fields correctly, including the default presign TTL.
+func TestLoad_storageBackend_r2_complete(t *testing.T) {
+	t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
+	t.Setenv("STORAGE_BACKEND", "r2")
+	t.Setenv("R2_ACCOUNT_ID", "acct")
+	t.Setenv("R2_ACCESS_KEY_ID", "key")
+	t.Setenv("R2_SECRET_ACCESS_KEY", "secret")
+	t.Setenv("R2_BUCKET", "cantus-cache")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StorageBackend != "r2" {
+		t.Errorf("StorageBackend = %q, want r2", cfg.StorageBackend)
+	}
+	if cfg.R2AccountID != "acct" {
+		t.Errorf("R2AccountID = %q", cfg.R2AccountID)
+	}
+	if cfg.R2AccessKeyID != "key" {
+		t.Errorf("R2AccessKeyID = %q", cfg.R2AccessKeyID)
+	}
+	if cfg.R2SecretAccessKey != "secret" {
+		t.Errorf("R2SecretAccessKey = %q", cfg.R2SecretAccessKey)
+	}
+	if cfg.R2Bucket != "cantus-cache" {
+		t.Errorf("R2Bucket = %q", cfg.R2Bucket)
+	}
+	if cfg.R2PresignTTLSeconds != 600 {
+		t.Errorf("R2PresignTTLSeconds = %d, want default 600", cfg.R2PresignTTLSeconds)
+	}
+}
+
+// TestLoad_storageBackend_invalid verifies that an unknown STORAGE_BACKEND
+// value is rejected with an error mentioning the var name.
+func TestLoad_storageBackend_invalid(t *testing.T) {
+	t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
+	t.Setenv("STORAGE_BACKEND", "s3")
+	_, err := config.Load()
+	if err == nil {
+		t.Fatalf("Load: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "STORAGE_BACKEND") {
+		t.Errorf("error %q does not mention STORAGE_BACKEND", err.Error())
+	}
+}
+
 // TestLoad_ErrorCases is a table-driven test covering all validation failures.
 func TestLoad_ErrorCases(t *testing.T) {
 	validKey := strings.Repeat("a", 32)

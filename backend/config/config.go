@@ -20,6 +20,14 @@ type Config struct {
 	Port               int    // PORT, default 8080
 	VideoIDSigningKey  string // VIDEO_ID_SIGNING_KEY, required, >= 32 chars
 	LogLevel           string // LOG_LEVEL, one of debug/info/warn/error, default "info"
+
+	StorageBackend      string // STORAGE_BACKEND, "local" or "r2"; default "local"
+	BlobBaseURL         string // BLOB_BASE_URL, default "http://localhost:8080" (local mode only)
+	R2AccountID         string // R2_ACCOUNT_ID, required if r2
+	R2AccessKeyID       string // R2_ACCESS_KEY_ID, required if r2
+	R2SecretAccessKey   string // R2_SECRET_ACCESS_KEY, required if r2
+	R2Bucket            string // R2_BUCKET, required if r2
+	R2PresignTTLSeconds int    // R2_PRESIGN_TTL_SECONDS, default 600
 }
 
 // Load reads environment variables and returns a validated Config.
@@ -63,6 +71,39 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("VIDEO_ID_SIGNING_KEY must be at least %d characters, got %d", minSigningKeyLen, len(key))
 	}
 	cfg.VideoIDSigningKey = key
+
+	// STORAGE_BACKEND: "local" or "r2", default "local".
+	cfg.StorageBackend = getEnvString("STORAGE_BACKEND", "local")
+	switch cfg.StorageBackend {
+	case "local":
+		cfg.BlobBaseURL = getEnvString("BLOB_BASE_URL", "http://localhost:8080")
+	case "r2":
+		required := []struct {
+			name string
+			dest *string
+		}{
+			{"R2_ACCOUNT_ID", &cfg.R2AccountID},
+			{"R2_ACCESS_KEY_ID", &cfg.R2AccessKeyID},
+			{"R2_SECRET_ACCESS_KEY", &cfg.R2SecretAccessKey},
+			{"R2_BUCKET", &cfg.R2Bucket},
+		}
+		var missing []string
+		for _, r := range required {
+			v := os.Getenv(r.name)
+			if v == "" {
+				missing = append(missing, r.name)
+			}
+			*r.dest = v
+		}
+		if len(missing) > 0 {
+			return nil, fmt.Errorf("missing required env vars for STORAGE_BACKEND=r2: %v", missing)
+		}
+		if cfg.R2PresignTTLSeconds, err = getEnvInt("R2_PRESIGN_TTL_SECONDS", 600); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("STORAGE_BACKEND: %q is not one of local/r2", cfg.StorageBackend)
+	}
 
 	return cfg, nil
 }
