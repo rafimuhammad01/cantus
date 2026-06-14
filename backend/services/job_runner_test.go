@@ -57,19 +57,19 @@ func (f *fakeShifter) Shift(ctx context.Context, in, out string, st float64) err
 	return os.WriteFile(out, []byte("shifted"), 0o644)
 }
 
-type fakeGPUJob struct {
+type fakeProcessorJob struct {
 	separateFn  func(ctx context.Context, inURL, vocalsURL, noVocalsURL string) error
 	melodyFn    func(ctx context.Context, vocalsURL, outURL string) error
 	melodyCalls int
 }
 
-func (f *fakeGPUJob) Separate(ctx context.Context, inURL, vocalsURL, noVocalsURL string) error {
+func (f *fakeProcessorJob) Separate(ctx context.Context, inURL, vocalsURL, noVocalsURL string) error {
 	if f.separateFn != nil {
 		return f.separateFn(ctx, inURL, vocalsURL, noVocalsURL)
 	}
 	return nil
 }
-func (f *fakeGPUJob) Melody(ctx context.Context, vocalsURL, outURL string) error {
+func (f *fakeProcessorJob) Melody(ctx context.Context, vocalsURL, outURL string) error {
 	f.melodyCalls++
 	if f.melodyFn != nil {
 		return f.melodyFn(ctx, vocalsURL, outURL)
@@ -100,10 +100,10 @@ func newTestSetup(t *testing.T, maxConcurrent int) (
 	jobStore = services.NewJobStore(time.Hour)
 	fakeYT = &fakeYouTubeJob{}
 	fakeShift = &fakeShifter{}
-	// fakeGPU is wired inside each test via runner replacement or via the default no-op.
-	// newTestSetup always creates a no-op GPU fake; tests that need separation side effects
-	// must call newTestSetupWithGPU or set up a custom runner.
-	runner = services.NewJobRunner(fakeYT, storage, &fakeGPUJob{}, fakeShift, jobStore, maxConcurrent)
+	// fakeProc is wired inside each test via runner replacement or via the default no-op.
+	// newTestSetup always creates a no-op processor fake; tests that need separation side effects
+	// must set up a custom runner.
+	runner = services.NewJobRunner(fakeYT, storage, &fakeProcessorJob{}, fakeShift, jobStore, maxConcurrent)
 	return
 }
 
@@ -285,9 +285,9 @@ func TestJobRunner_Run(t *testing.T) {
 			storage, jobStore, fakeYT, fakeShift, _ := newTestSetup(t, 1)
 			ctx := context.Background()
 
-			// Per-test fakeGPUJob so we can configure separateFn/melodyFn and track call counts.
+			// Per-test fakeProcessorJob so we can configure separateFn/melodyFn and track call counts.
 			var gpuSeparateCalls int
-			fakeGPU := &fakeGPUJob{}
+			fakeProc := &fakeProcessorJob{}
 
 			// Pre-stage cache files.
 			if len(tt.preStage) > 0 {
@@ -300,12 +300,12 @@ func TestJobRunner_Run(t *testing.T) {
 			// Wire GPU Separate: commit stems into storage so Verify passes, or return error.
 			if tt.separateErr != nil {
 				sepErrVal := tt.separateErr
-				fakeGPU.separateFn = func(_ context.Context, _, _, _ string) error {
+				fakeProc.separateFn = func(_ context.Context, _, _, _ string) error {
 					gpuSeparateCalls++
 					return sepErrVal
 				}
 			} else if tt.writeSeparateFiles {
-				fakeGPU.separateFn = func(_ context.Context, _, _, _ string) error {
+				fakeProc.separateFn = func(_ context.Context, _, _, _ string) error {
 					gpuSeparateCalls++
 					commitFile(t, storage, storage.Key(videoID, "vocals.wav"), "fake vocals")
 					commitFile(t, storage, storage.Key(videoID, "no_vocals.wav"), "fake no_vocals")
@@ -316,11 +316,11 @@ func TestJobRunner_Run(t *testing.T) {
 			// Wire GPU Melody: commit melody.json into storage so Verify passes, or return error.
 			if tt.melodyErr != nil {
 				melodyErrVal := tt.melodyErr
-				fakeGPU.melodyFn = func(_ context.Context, _, _ string) error {
+				fakeProc.melodyFn = func(_ context.Context, _, _ string) error {
 					return melodyErrVal
 				}
 			} else if tt.writeMelodyFile {
-				fakeGPU.melodyFn = func(_ context.Context, _, _ string) error {
+				fakeProc.melodyFn = func(_ context.Context, _, _ string) error {
 					commitFile(t, storage, storage.Key(videoID, "melody.json"), `{"hop_ms":10,"frames":[]}`)
 					return nil
 				}
@@ -346,8 +346,8 @@ func TestJobRunner_Run(t *testing.T) {
 				}
 			}
 
-			// Build a fresh runner with the per-test fakeGPU.
-			runner := services.NewJobRunner(fakeYT, storage, fakeGPU, fakeShift, jobStore, 1)
+			// Build a fresh runner with the per-test fakeProc.
+			runner := services.NewJobRunner(fakeYT, storage, fakeProc, fakeShift, jobStore, 1)
 
 			// Create a job so jobStore has the record.
 			jobID := "test-job-run"
@@ -375,8 +375,8 @@ func TestJobRunner_Run(t *testing.T) {
 			if gpuSeparateCalls != tt.wantSeparateCalls {
 				t.Errorf("separateCalls: got %d, want %d", gpuSeparateCalls, tt.wantSeparateCalls)
 			}
-			if fakeGPU.melodyCalls != tt.wantMelodyCalls {
-				t.Errorf("melodyCalls: got %d, want %d", fakeGPU.melodyCalls, tt.wantMelodyCalls)
+			if fakeProc.melodyCalls != tt.wantMelodyCalls {
+				t.Errorf("melodyCalls: got %d, want %d", fakeProc.melodyCalls, tt.wantMelodyCalls)
 			}
 			if got := len(fakeShift.calls); got != tt.wantShiftCalls {
 				t.Errorf("shiftCalls: got %d, want %d", got, tt.wantShiftCalls)
@@ -416,7 +416,7 @@ func TestJobRunner_Submit_RunsAsync(t *testing.T) {
 	const videoID = "dQw4w9WgXcQ"
 
 	var gpuSeparateCalls int
-	fakeGPU := &fakeGPUJob{
+	fakeProc := &fakeProcessorJob{
 		separateFn: func(_ context.Context, _, _, _ string) error {
 			gpuSeparateCalls++
 			commitFile(t, storage, storage.Key(videoID, "vocals.wav"), "v")
@@ -428,7 +428,7 @@ func TestJobRunner_Submit_RunsAsync(t *testing.T) {
 			return nil
 		},
 	}
-	runner := services.NewJobRunner(fakeYT, storage, fakeGPU, fakeShift, jobStore, 1)
+	runner := services.NewJobRunner(fakeYT, storage, fakeProc, fakeShift, jobStore, 1)
 
 	// Wire side-effect fns so pipeline can complete.
 	fakeYT.downloadFullFn = func(vid string) error {
@@ -462,8 +462,8 @@ func TestJobRunner_Submit_RunsAsync(t *testing.T) {
 	if gpuSeparateCalls != 1 {
 		t.Errorf("separateCalls: got %d, want 1", gpuSeparateCalls)
 	}
-	if fakeGPU.melodyCalls != 1 {
-		t.Errorf("melodyCalls: got %d, want 1", fakeGPU.melodyCalls)
+	if fakeProc.melodyCalls != 1 {
+		t.Errorf("melodyCalls: got %d, want 1", fakeProc.melodyCalls)
 	}
 	if got := len(fakeShift.calls); got != 1 {
 		t.Errorf("shiftCalls: got %d, want 1", got)
@@ -496,7 +496,7 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		fakeShiftDedup1 := &fakeShifter{}
 
 		var gpuSeparateCalls int
-		fakeGPU := &fakeGPUJob{
+		fakeProc := &fakeProcessorJob{
 			separateFn: func(_ context.Context, _, _, _ string) error {
 				gpuSeparateCalls++
 				// Signal that we have entered Separate, then block until the test releases us.
@@ -508,7 +508,7 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 			},
 		}
 
-		runner := services.NewJobRunner(fakeYT, storage, fakeGPU, fakeShiftDedup1, jobStore, 2) // allow 2 concurrent so semaphore is not the bottleneck
+		runner := services.NewJobRunner(fakeYT, storage, fakeProc, fakeShiftDedup1, jobStore, 2) // allow 2 concurrent so semaphore is not the bottleneck
 
 		const videoID = "dedupvideo1"
 
@@ -516,7 +516,7 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 			commitFile(t, storage, storage.Key(vid, "original.wav"), "orig")
 			return nil
 		}
-		fakeGPU.melodyFn = func(_ context.Context, _, _ string) error {
+		fakeProc.melodyFn = func(_ context.Context, _, _ string) error {
 			commitFile(t, storage, storage.Key(videoID, "melody.json"), `{}`)
 			return nil
 		}
@@ -559,7 +559,7 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		storage, jobStore, fakeYT, fakeShift2, _ := newTestSetup(t, 1)
 		const videoID = "dedupvideo2"
 
-		fakeGPU := &fakeGPUJob{
+		fakeProc := &fakeProcessorJob{
 			separateFn: func(_ context.Context, _, _, _ string) error {
 				commitFile(t, storage, storage.Key(videoID, "vocals.wav"), "v")
 				commitFile(t, storage, storage.Key(videoID, "no_vocals.wav"), "nv")
@@ -570,7 +570,7 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 				return nil
 			},
 		}
-		runner := services.NewJobRunner(fakeYT, storage, fakeGPU, fakeShift2, jobStore, 1)
+		runner := services.NewJobRunner(fakeYT, storage, fakeProc, fakeShift2, jobStore, 1)
 
 		fakeYT.downloadFullFn = func(vid string) error {
 			commitFile(t, storage, storage.Key(vid, "original.wav"), "orig")
@@ -603,12 +603,12 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		const videoID = "dedupvideo3"
 
 		// First run: GPU Separate fails.
-		failGPU := &fakeGPUJob{
+		failProc := &fakeProcessorJob{
 			separateFn: func(_ context.Context, _, _, _ string) error {
 				return errors.New("demucs: GPU OOM")
 			},
 		}
-		runner := services.NewJobRunner(fakeYT, storage, failGPU, fakeShift3, jobStore, 1)
+		runner := services.NewJobRunner(fakeYT, storage, failProc, fakeShift3, jobStore, 1)
 
 		// Wire download to succeed (writes original.wav) so we reach Separate.
 		fakeYT.downloadFullFn = func(vid string) error {
@@ -620,16 +620,16 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		waitForStatus(t, jobStore, jobID1, models.StatusError, 3*time.Second)
 
 		// Second run: GPU Separate succeeds and commits stems.
-		successGPU := &fakeGPUJob{
+		successProc := &fakeProcessorJob{
 			separateFn: func(_ context.Context, _, _, _ string) error {
 				commitFile(t, storage, storage.Key(videoID, "vocals.wav"), "v")
 				commitFile(t, storage, storage.Key(videoID, "no_vocals.wav"), "nv")
 				return nil
 			},
 		}
-		runner2 := services.NewJobRunner(fakeYT, storage, successGPU, fakeShift3, jobStore, 1)
+		runner2 := services.NewJobRunner(fakeYT, storage, successProc, fakeShift3, jobStore, 1)
 
-		successGPU.melodyFn = func(_ context.Context, _, _ string) error {
+		successProc.melodyFn = func(_ context.Context, _, _ string) error {
 			commitFile(t, storage, storage.Key(videoID, "melody.json"), `{}`)
 			return nil
 		}
@@ -671,7 +671,7 @@ func TestJobRunner_Submit_BoundedConcurrency(t *testing.T) {
 	const vid1 = "aaaaaaaaaaa"
 	const vid2 = "bbbbbbbbbbb"
 
-	fakeGPU := &fakeGPUJob{
+	fakeProc := &fakeProcessorJob{
 		separateFn: func(_ context.Context, _, _, _ string) error {
 			// Block until the test closes blockCh, simulating a long Demucs run.
 			<-blockCh
@@ -691,7 +691,7 @@ func TestJobRunner_Submit_BoundedConcurrency(t *testing.T) {
 		},
 	}
 
-	runner := services.NewJobRunner(fakeYT, storage, fakeGPU, fakeShiftConc, jobStore, 1)
+	runner := services.NewJobRunner(fakeYT, storage, fakeProc, fakeShiftConc, jobStore, 1)
 
 	// Both jobs share fakeYT; downloadFullFn writes original.wav per videoID.
 	fakeYT.downloadFullFn = func(vid string) error {

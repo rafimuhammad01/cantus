@@ -75,19 +75,19 @@ func main() {
 		}
 	}
 
-	gpuProc := services.NewPythonGPUProcessorClient(
-		cfg.GPUProcessorURL,
-		&http.Client{Timeout: time.Duration(cfg.GPUProcessorTimeoutSeconds) * time.Second},
+	processor := services.NewPythonProcessorClient(
+		cfg.ProcessorURL,
+		&http.Client{Timeout: time.Duration(cfg.ProcessorTimeoutSeconds) * time.Second},
 	)
 	jobStore := services.NewJobStore(1 * time.Hour)
 	jobStore.StartCleanup(ctx, 5*time.Minute)
 
-	shifter := services.NewCLIShifter("rubberband", "ffmpeg", services.ExecRunner{})
+	shifter := services.NewCLIShifter(cfg.RubberbandPath, cfg.FFmpegPath, services.ExecRunner{})
 
 	maxJobs := cfg.MaxConcurrentJobs
-	jobRunner := services.NewJobRunner(svc, storage, gpuProc, shifter, jobStore, maxJobs)
+	jobRunner := services.NewJobRunner(svc, storage, processor, shifter, jobStore, maxJobs)
 
-	r := api.NewRouter(origins, log, svc, signer, storage, gpuProc, shifter, jobRunner, jobStore, blobTokener)
+	r := api.NewRouter(origins, log, svc, signer, storage, processor, shifter, jobRunner, jobStore, blobTokener)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),

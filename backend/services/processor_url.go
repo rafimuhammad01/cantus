@@ -8,40 +8,24 @@ import (
 	"net/http"
 )
 
-// CPUProcessorClient covers Python work that does not require a GPU.
-type CPUProcessorClient interface {
-	Shift(ctx context.Context, inputURL, outputURL string, semitones float64) error
-	PreviewKey(ctx context.Context, inputURL string) (string, error)
-}
-
-// GPUProcessorClient covers Python work that needs a GPU.
-type GPUProcessorClient interface {
+// ProcessorClient covers GPU-bound Python work: Demucs vocal separation
+// and CREPE melody extraction. The Python service is reached over HTTP with
+// presigned URL handoff for audio data.
+type ProcessorClient interface {
 	Separate(ctx context.Context, inputURL, vocalsOutputURL, noVocalsOutputURL string) error
 	Melody(ctx context.Context, vocalsInputURL, outputURL string) error
 }
 
-// PythonCPUProcessorClient is the HTTP-backed CPUProcessorClient.
-type PythonCPUProcessorClient struct {
+// PythonProcessorClient is the HTTP-backed ProcessorClient.
+type PythonProcessorClient struct {
 	baseURL string
 	client  *http.Client
 }
 
-// NewPythonCPUProcessorClient returns a CPU client. http.Client.Timeout governs
-// the overall request budget (~30s in production).
-func NewPythonCPUProcessorClient(baseURL string, client *http.Client) *PythonCPUProcessorClient {
-	return &PythonCPUProcessorClient{baseURL: baseURL, client: client}
-}
-
-// PythonGPUProcessorClient is the HTTP-backed GPUProcessorClient.
-type PythonGPUProcessorClient struct {
-	baseURL string
-	client  *http.Client
-}
-
-// NewPythonGPUProcessorClient returns a GPU client. http.Client.Timeout should
+// NewPythonProcessorClient returns a processor client. http.Client.Timeout should
 // be large enough to absorb HF Space cold start + Demucs runtime (~180s).
-func NewPythonGPUProcessorClient(baseURL string, client *http.Client) *PythonGPUProcessorClient {
-	return &PythonGPUProcessorClient{baseURL: baseURL, client: client}
+func NewPythonProcessorClient(baseURL string, client *http.Client) *PythonProcessorClient {
+	return &PythonProcessorClient{baseURL: baseURL, client: client}
 }
 
 // postJSON marshals body, POSTs to baseURL+path, and decodes the response into
@@ -76,35 +60,10 @@ func postJSON(ctx context.Context, client *http.Client, baseURL, path string, bo
 	return nil
 }
 
-// Shift calls the Python /shift endpoint to pitch-shift audio at inputURL by
-// semitones, writing the result to outputURL.
-func (p *PythonCPUProcessorClient) Shift(ctx context.Context, inputURL, outputURL string, semitones float64) error {
-	return postJSON(ctx, p.client, p.baseURL, "/shift", map[string]any{
-		"input_url":  inputURL,
-		"output_url": outputURL,
-		"semitones":  semitones,
-	}, nil)
-}
-
-// PreviewKey calls the Python /preview-key endpoint to estimate the musical key
-// of the audio at inputURL. Returns the key string (e.g. "A major") or "" for
-// silent input.
-func (p *PythonCPUProcessorClient) PreviewKey(ctx context.Context, inputURL string) (string, error) {
-	var resp struct {
-		Key string `json:"key"`
-	}
-	if err := postJSON(ctx, p.client, p.baseURL, "/preview-key", map[string]any{
-		"input_url": inputURL,
-	}, &resp); err != nil {
-		return "", err
-	}
-	return resp.Key, nil
-}
-
 // Separate calls the Python /separate endpoint to split the audio at inputURL
 // into vocals and no-vocals stems, uploading results to vocalsOutputURL and
 // noVocalsOutputURL respectively.
-func (p *PythonGPUProcessorClient) Separate(ctx context.Context, inputURL, vocalsOutputURL, noVocalsOutputURL string) error {
+func (p *PythonProcessorClient) Separate(ctx context.Context, inputURL, vocalsOutputURL, noVocalsOutputURL string) error {
 	return postJSON(ctx, p.client, p.baseURL, "/separate", map[string]any{
 		"input_url":            inputURL,
 		"vocals_output_url":    vocalsOutputURL,
@@ -114,7 +73,7 @@ func (p *PythonGPUProcessorClient) Separate(ctx context.Context, inputURL, vocal
 
 // Melody calls the Python /melody endpoint to extract pitch data from the
 // vocals stem at vocalsInputURL, uploading the result JSON to outputURL.
-func (p *PythonGPUProcessorClient) Melody(ctx context.Context, vocalsInputURL, outputURL string) error {
+func (p *PythonProcessorClient) Melody(ctx context.Context, vocalsInputURL, outputURL string) error {
 	return postJSON(ctx, p.client, p.baseURL, "/melody", map[string]any{
 		"vocals_input_url": vocalsInputURL,
 		"output_url":       outputURL,

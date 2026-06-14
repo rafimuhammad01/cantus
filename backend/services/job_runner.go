@@ -19,7 +19,7 @@ import (
 type JobRunner struct {
 	ytSvc     YouTubeService
 	storage   Storage
-	gpu       GPUProcessorClient
+	processor ProcessorClient
 	shifter   Shifter
 	jobStore  *JobStore
 	semaphore chan struct{} // capacity = maxConcurrent
@@ -30,7 +30,7 @@ type JobRunner struct {
 func NewJobRunner(
 	ytSvc YouTubeService,
 	storage Storage,
-	gpu GPUProcessorClient,
+	processor ProcessorClient,
 	shifter Shifter,
 	jobStore *JobStore,
 	maxConcurrent int,
@@ -39,7 +39,7 @@ func NewJobRunner(
 		maxConcurrent = 1
 	}
 	return &JobRunner{
-		ytSvc: ytSvc, storage: storage, gpu: gpu, shifter: shifter,
+		ytSvc: ytSvc, storage: storage, processor: processor, shifter: shifter,
 		jobStore:  jobStore,
 		semaphore: make(chan struct{}, maxConcurrent),
 	}
@@ -125,7 +125,7 @@ func (r *JobRunner) Run(ctx context.Context, jobID, videoID string, semitones in
 			r.fail(jobID, "sign put failed: "+err.Error())
 			return
 		}
-		if err := r.gpu.Separate(ctx, inURL, vocalsPutURL, noVocalsPutURL); err != nil {
+		if err := r.processor.Separate(ctx, inURL, vocalsPutURL, noVocalsPutURL); err != nil {
 			r.fail(jobID, "separate failed: "+err.Error())
 			return
 		}
@@ -154,7 +154,7 @@ func (r *JobRunner) Run(ctx context.Context, jobID, videoID string, semitones in
 			r.fail(jobID, "sign put failed: "+err.Error())
 			return
 		}
-		if err := r.gpu.Melody(ctx, vocalsURL, outURL); err != nil {
+		if err := r.processor.Melody(ctx, vocalsURL, outURL); err != nil {
 			r.fail(jobID, "melody failed: "+err.Error())
 			return
 		}

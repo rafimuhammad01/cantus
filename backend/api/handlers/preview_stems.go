@@ -35,7 +35,7 @@ func PreviewStems(
 	signer *services.Signer,
 	storage services.Storage,
 	ytSvc services.YouTubeService,
-	gpu services.GPUProcessorClient,
+	processor services.ProcessorClient,
 	transcode services.TranscodeFunc,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -131,8 +131,8 @@ func PreviewStems(
 				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "sign put failed"})
 				return
 			}
-			if err := gpu.Separate(ctx, inURL, vocalsPutURL, noVocalsPutURL); err != nil {
-				log.Error().Err(err).Str("videoId", videoID).Msg("gpu.Separate failed")
+			if err := processor.Separate(ctx, inURL, vocalsPutURL, noVocalsPutURL); err != nil {
+				log.Error().Err(err).Str("videoId", videoID).Msg("processor.Separate failed")
 				writeJSON(w, http.StatusBadGateway, errorResponse{Error: "separate failed"})
 				return
 			}
@@ -206,8 +206,8 @@ func PreviewStems(
 				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "sign put failed"})
 				return
 			}
-			if err := gpu.Melody(ctx, vocalsURL, outURL); err != nil {
-				log.Error().Err(err).Str("videoId", videoID).Msg("gpu.Melody failed")
+			if err := processor.Melody(ctx, vocalsURL, outURL); err != nil {
+				log.Error().Err(err).Str("videoId", videoID).Msg("processor.Melody failed")
 				writeJSON(w, http.StatusBadGateway, errorResponse{Error: "melody failed"})
 				return
 			}

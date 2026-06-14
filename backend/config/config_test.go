@@ -39,17 +39,17 @@ func TestLoad_HappyPath_WithDefaults(t *testing.T) {
 	if cfg.VideoIDSigningKey != strings.Repeat("a", 32) {
 		t.Errorf("VideoIDSigningKey: got %q, want %q", cfg.VideoIDSigningKey, strings.Repeat("a", 32))
 	}
-	if cfg.CPUProcessorURL != "http://localhost:8090" {
-		t.Errorf("CPUProcessorURL: got %q, want %q", cfg.CPUProcessorURL, "http://localhost:8090")
+	if cfg.ProcessorURL != "http://localhost:8090" {
+		t.Errorf("ProcessorURL: got %q, want %q", cfg.ProcessorURL, "http://localhost:8090")
 	}
-	if cfg.GPUProcessorURL != "http://localhost:8090" {
-		t.Errorf("GPUProcessorURL: got %q, want %q", cfg.GPUProcessorURL, "http://localhost:8090")
+	if cfg.ProcessorTimeoutSeconds != 180 {
+		t.Errorf("ProcessorTimeoutSeconds: got %d, want %d", cfg.ProcessorTimeoutSeconds, 180)
 	}
-	if cfg.CPUProcessorTimeoutSeconds != 30 {
-		t.Errorf("CPUProcessorTimeoutSeconds: got %d, want %d", cfg.CPUProcessorTimeoutSeconds, 30)
+	if cfg.RubberbandPath != "rubberband" {
+		t.Errorf("RubberbandPath: got %q, want %q", cfg.RubberbandPath, "rubberband")
 	}
-	if cfg.GPUProcessorTimeoutSeconds != 180 {
-		t.Errorf("GPUProcessorTimeoutSeconds: got %d, want %d", cfg.GPUProcessorTimeoutSeconds, 180)
+	if cfg.FFmpegPath != "ffmpeg" {
+		t.Errorf("FFmpegPath: got %q, want %q", cfg.FFmpegPath, "ffmpeg")
 	}
 }
 
@@ -65,10 +65,10 @@ func TestLoad_HappyPath_AllExplicit(t *testing.T) {
 	t.Setenv("MAX_CONCURRENT_JOBS", "5")
 	t.Setenv("ALLOWED_ORIGINS", "https://example.com")
 	t.Setenv("PORT", "9090")
-	t.Setenv("CPU_PROCESSOR_URL", "http://cpu:9991")
-	t.Setenv("GPU_PROCESSOR_URL", "http://gpu:9992")
-	t.Setenv("CPU_PROCESSOR_TIMEOUT_SECONDS", "45")
-	t.Setenv("GPU_PROCESSOR_TIMEOUT_SECONDS", "240")
+	t.Setenv("PROCESSOR_URL", "http://proc:9991")
+	t.Setenv("PROCESSOR_TIMEOUT_SECONDS", "240")
+	t.Setenv("RUBBERBAND_PATH", "/usr/local/bin/rubberband")
+	t.Setenv("FFMPEG_PATH", "/usr/local/bin/ffmpeg")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -96,17 +96,17 @@ func TestLoad_HappyPath_AllExplicit(t *testing.T) {
 	if cfg.VideoIDSigningKey != signingKey {
 		t.Errorf("VideoIDSigningKey: got %q, want %q", cfg.VideoIDSigningKey, signingKey)
 	}
-	if cfg.CPUProcessorURL != "http://cpu:9991" {
-		t.Errorf("CPUProcessorURL: got %q, want %q", cfg.CPUProcessorURL, "http://cpu:9991")
+	if cfg.ProcessorURL != "http://proc:9991" {
+		t.Errorf("ProcessorURL: got %q, want %q", cfg.ProcessorURL, "http://proc:9991")
 	}
-	if cfg.GPUProcessorURL != "http://gpu:9992" {
-		t.Errorf("GPUProcessorURL: got %q, want %q", cfg.GPUProcessorURL, "http://gpu:9992")
+	if cfg.ProcessorTimeoutSeconds != 240 {
+		t.Errorf("ProcessorTimeoutSeconds: got %d, want %d", cfg.ProcessorTimeoutSeconds, 240)
 	}
-	if cfg.CPUProcessorTimeoutSeconds != 45 {
-		t.Errorf("CPUProcessorTimeoutSeconds: got %d, want %d", cfg.CPUProcessorTimeoutSeconds, 45)
+	if cfg.RubberbandPath != "/usr/local/bin/rubberband" {
+		t.Errorf("RubberbandPath: got %q, want %q", cfg.RubberbandPath, "/usr/local/bin/rubberband")
 	}
-	if cfg.GPUProcessorTimeoutSeconds != 240 {
-		t.Errorf("GPUProcessorTimeoutSeconds: got %d, want %d", cfg.GPUProcessorTimeoutSeconds, 240)
+	if cfg.FFmpegPath != "/usr/local/bin/ffmpeg" {
+		t.Errorf("FFmpegPath: got %q, want %q", cfg.FFmpegPath, "/usr/local/bin/ffmpeg")
 	}
 }
 
@@ -329,57 +329,65 @@ func TestLoad_storageBackend_invalid(t *testing.T) {
 	}
 }
 
-// TestLoad_processorConfig is a table-driven test covering CPU/GPU processor
-// URL and timeout configuration: defaults, fallback from PYTHON_PROCESSOR_URL,
-// and independent overrides.
+// TestLoad_processorConfig is a table-driven test covering processor URL and
+// timeout configuration: defaults, fallback from PYTHON_PROCESSOR_URL, override,
+// and the new binary path defaults.
 func TestLoad_processorConfig(t *testing.T) {
 	tests := []struct {
-		name string
-		env  map[string]string
-
-		wantCPUURL     string
-		wantGPUURL     string
-		wantCPUTimeout int
-		wantGPUTimeout int
+		name           string
+		env            map[string]string
+		wantURL        string
+		wantTimeout    int
+		wantRubberband string
+		wantFFmpeg     string
 	}{
 		{
-			name:           "CPU/GPU URLs default to PYTHON_PROCESSOR_URL when neither override set",
+			name:           "ProcessorURL defaults to PYTHON_PROCESSOR_URL when unset",
 			env:            map[string]string{"PYTHON_PROCESSOR_URL": "http://py:9000"},
-			wantCPUURL:     "http://py:9000",
-			wantGPUURL:     "http://py:9000",
-			wantCPUTimeout: 30,
-			wantGPUTimeout: 180,
+			wantURL:        "http://py:9000",
+			wantTimeout:    180,
+			wantRubberband: "rubberband",
+			wantFFmpeg:     "ffmpeg",
 		},
 		{
-			name: "CPU and GPU URLs override independently",
+			name: "PROCESSOR_URL overrides PYTHON_PROCESSOR_URL",
 			env: map[string]string{
 				"PYTHON_PROCESSOR_URL": "http://py:9000",
-				"CPU_PROCESSOR_URL":    "http://cpu:8091",
-				"GPU_PROCESSOR_URL":    "http://gpu:8092",
+				"PROCESSOR_URL":        "http://proc:8091",
 			},
-			wantCPUURL:     "http://cpu:8091",
-			wantGPUURL:     "http://gpu:8092",
-			wantCPUTimeout: 30,
-			wantGPUTimeout: 180,
+			wantURL:        "http://proc:8091",
+			wantTimeout:    180,
+			wantRubberband: "rubberband",
+			wantFFmpeg:     "ffmpeg",
 		},
 		{
-			name:           "timeouts default to 30 / 180 when env unset",
+			name:           "timeout defaults to 180 when env unset",
 			env:            map[string]string{},
-			wantCPUTimeout: 30,
-			wantGPUTimeout: 180,
-			wantCPUURL:     "http://localhost:8090",
-			wantGPUURL:     "http://localhost:8090",
+			wantURL:        "http://localhost:8090",
+			wantTimeout:    180,
+			wantRubberband: "rubberband",
+			wantFFmpeg:     "ffmpeg",
 		},
 		{
-			name: "timeouts override independently",
+			name: "timeout overrides via PROCESSOR_TIMEOUT_SECONDS",
 			env: map[string]string{
-				"CPU_PROCESSOR_TIMEOUT_SECONDS": "60",
-				"GPU_PROCESSOR_TIMEOUT_SECONDS": "240",
+				"PROCESSOR_TIMEOUT_SECONDS": "240",
 			},
-			wantCPUTimeout: 60,
-			wantGPUTimeout: 240,
-			wantCPUURL:     "http://localhost:8090",
-			wantGPUURL:     "http://localhost:8090",
+			wantURL:        "http://localhost:8090",
+			wantTimeout:    240,
+			wantRubberband: "rubberband",
+			wantFFmpeg:     "ffmpeg",
+		},
+		{
+			name: "binary paths override via RUBBERBAND_PATH and FFMPEG_PATH",
+			env: map[string]string{
+				"RUBBERBAND_PATH": "/opt/bin/rubberband",
+				"FFMPEG_PATH":     "/opt/bin/ffmpeg",
+			},
+			wantURL:        "http://localhost:8090",
+			wantTimeout:    180,
+			wantRubberband: "/opt/bin/rubberband",
+			wantFFmpeg:     "/opt/bin/ffmpeg",
 		},
 	}
 	for _, tc := range tests {
@@ -392,17 +400,17 @@ func TestLoad_processorConfig(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
-			if cfg.CPUProcessorURL != tc.wantCPUURL {
-				t.Errorf("CPUProcessorURL: got %q, want %q", cfg.CPUProcessorURL, tc.wantCPUURL)
+			if cfg.ProcessorURL != tc.wantURL {
+				t.Errorf("ProcessorURL: got %q, want %q", cfg.ProcessorURL, tc.wantURL)
 			}
-			if cfg.GPUProcessorURL != tc.wantGPUURL {
-				t.Errorf("GPUProcessorURL: got %q, want %q", cfg.GPUProcessorURL, tc.wantGPUURL)
+			if cfg.ProcessorTimeoutSeconds != tc.wantTimeout {
+				t.Errorf("ProcessorTimeoutSeconds: got %d, want %d", cfg.ProcessorTimeoutSeconds, tc.wantTimeout)
 			}
-			if cfg.CPUProcessorTimeoutSeconds != tc.wantCPUTimeout {
-				t.Errorf("CPUProcessorTimeoutSeconds: got %d, want %d", cfg.CPUProcessorTimeoutSeconds, tc.wantCPUTimeout)
+			if cfg.RubberbandPath != tc.wantRubberband {
+				t.Errorf("RubberbandPath: got %q, want %q", cfg.RubberbandPath, tc.wantRubberband)
 			}
-			if cfg.GPUProcessorTimeoutSeconds != tc.wantGPUTimeout {
-				t.Errorf("GPUProcessorTimeoutSeconds: got %d, want %d", cfg.GPUProcessorTimeoutSeconds, tc.wantGPUTimeout)
+			if cfg.FFmpegPath != tc.wantFFmpeg {
+				t.Errorf("FFmpegPath: got %q, want %q", cfg.FFmpegPath, tc.wantFFmpeg)
 			}
 		})
 	}
@@ -455,20 +463,12 @@ func TestLoad_ErrorCases(t *testing.T) {
 			wantErrSub: "MAX_CONCURRENT_JOBS",
 		},
 		{
-			name: "invalid CPU_PROCESSOR_TIMEOUT_SECONDS",
+			name: "invalid PROCESSOR_TIMEOUT_SECONDS",
 			setup: func(t *testing.T) {
 				t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
-				t.Setenv("CPU_PROCESSOR_TIMEOUT_SECONDS", "notanumber")
+				t.Setenv("PROCESSOR_TIMEOUT_SECONDS", "notanumber")
 			},
-			wantErrSub: "CPU_PROCESSOR_TIMEOUT_SECONDS",
-		},
-		{
-			name: "invalid GPU_PROCESSOR_TIMEOUT_SECONDS",
-			setup: func(t *testing.T) {
-				t.Setenv("VIDEO_ID_SIGNING_KEY", strings.Repeat("a", 32))
-				t.Setenv("GPU_PROCESSOR_TIMEOUT_SECONDS", "notanumber")
-			},
-			wantErrSub: "GPU_PROCESSOR_TIMEOUT_SECONDS",
+			wantErrSub: "PROCESSOR_TIMEOUT_SECONDS",
 		},
 	}
 
