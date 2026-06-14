@@ -1,32 +1,50 @@
-// Probe: try two outbound fetches and return the result of each.
-// Tells us whether Workers can fetch at all (httpbin), and whether the EC2
-// HTTP origin is the specific problem.
+// Proxies /api/* from Cloudflare Pages to the EC2 backend.
+//
+// Browser → https://<cantus>.pages.dev/api/... → this Function → https://<EC2>/api/...
+//
+// Set CANTUS_BACKEND_URL in Pages env vars, e.g. "https://54-169-205-65.sslip.io".
 
-export const onRequest: PagesFunction<{
-  CANTUS_BACKEND_URL: string;
-}> = async () => {
-  const out: Record<string, unknown> = {};
+export const onRequest: PagesFunction<{ CANTUS_BACKEND_URL: string }> = async (
+  context,
+) => {
+  const { request, env } = context;
 
-  // Probe 1: known-good HTTPS public URL
-  try {
-    const r = await fetch("https://httpbin.org/get");
-    out.httpbin_status = r.status;
-    out.httpbin_body_len = (await r.text()).length;
-  } catch (err) {
-    out.httpbin_error = String(err);
+  if (!env.CANTUS_BACKEND_URL) {
+    return new Response(
+      JSON.stringify({ error: "CANTUS_BACKEND_URL not set" }),
+      { status: 500, headers: { "content-type": "application/json" } },
+    );
   }
 
-  // Probe 2: EC2 plain HTTP
-  try {
-    const r = await fetch("http://54.169.205.65/health");
-    out.ec2_status = r.status;
-    out.ec2_body = await r.text();
-  } catch (err) {
-    out.ec2_error = String(err);
-  }
+  const incoming = new URL(request.url);
+  const target =
+    env.CANTUS_BACKEND_URL.replace(/\/$/, "") +
+    incoming.pathname +
+    incoming.search;
 
-  return new Response(JSON.stringify(out, null, 2), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
+  try {
+    const init: RequestInit = {
+      method: request.method,
+      headers: request.headers,
+      redirect: "manual",
+    };
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      init.body = request.body;
+    }
+    const upstream = await fetch(target, init);
+    return new Response(upstream.body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: upstream.headers,
+    });
+  } catch (err) {
+    return new Response(
+      JSON.stringify({
+        error: "upstream fetch failed",
+        target,
+        detail: String(err),
+      }),
+      { status: 502, headers: { "content-type": "application/json" } },
+    );
+  }
 };
