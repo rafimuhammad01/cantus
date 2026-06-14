@@ -15,8 +15,16 @@ import modal
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("ffmpeg")
+    # crepe 0.0.16 is an sdist whose setup.py imports pkg_resources, which
+    # setuptools dropped in v80+. Install legacy setuptools first, then build
+    # crepe without build isolation so it picks it up.
+    .pip_install("setuptools<80", "wheel")
+    .pip_install("crepe==0.0.16", extra_options="--no-build-isolation")
     .pip_install_from_requirements("requirements.txt")
     .env({"MODEL_DIR": "/models"})
+    # Ship our source modules into the container so main, routers, services
+    # are importable at runtime.
+    .add_local_python_source("main", "logging_config", "routers", "services")
 )
 
 volume = modal.Volume.from_name("cantus-models", create_if_missing=True)

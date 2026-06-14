@@ -9,18 +9,17 @@ python-json-logger==4.1.0
 # Audio I/O
 soundfile==0.14.0
 librosa==0.11.0
-numpy==2.4.6
+numpy<2,>=1.23
 
 # Vocal separation (BS-Roformer via UVR fork)
 audio-separator[gpu]==0.30.0
 onnxruntime-gpu==1.20.1
 
 # Pitch extraction
-crepe==0.0.16
+# crepe is installed as a separate step in modal_app.py (needs legacy
+# setuptools at build time for pkg_resources). Local dev should `pip install
+# crepe==0.0.16 --no-build-isolation` after installing setuptools<80.
 tensorflow==2.21.0
-
-# Modal deploy
-modal==0.74.0
 
 # Dev / test
 pytest==9.0.3
