@@ -32,7 +32,7 @@ func TestPythonYouTubeService_SearchDelegates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := &fakeSearchDelegate{page: tt.page}
-			svc := services.NewPythonYouTubeService(fake, nil, nil, services.ExecRunner{})
+			svc := services.NewPythonYouTubeService(fake, nil, nil, services.ExecRunner{}, "")
 			got, err := svc.Search(context.Background(), "q", 5, 0)
 			if err != nil {
 				t.Fatalf("Search: %v", err)
@@ -175,6 +175,7 @@ func TestPythonYouTubeService_DownloadPreview(t *testing.T) {
 				signer,
 				store,
 				runner,
+				"",
 			)
 
 			err := svc.DownloadPreview(context.Background(), tt.videoID)
@@ -278,6 +279,7 @@ func TestPythonYouTubeService_DownloadPreview_ContextCanceled(t *testing.T) {
 				signer,
 				store,
 				runner,
+				"",
 			)
 
 			ctx, cancel := context.WithCancel(context.Background())
@@ -369,6 +371,7 @@ func TestPythonYouTubeService_DownloadFull(t *testing.T) {
 				signer,
 				store,
 				runner,
+				"",
 			)
 
 			err := svc.DownloadFull(context.Background(), tt.videoID)
@@ -470,6 +473,7 @@ func TestPythonYouTubeService_DownloadFull_ContextCanceled(t *testing.T) {
 				signer,
 				store,
 				runner,
+				"",
 			)
 
 			ctx, cancel := context.WithCancel(context.Background())
@@ -481,6 +485,52 @@ func TestPythonYouTubeService_DownloadFull_ContextCanceled(t *testing.T) {
 			}
 			if len(store.committed) > 0 {
 				t.Errorf("Commit: expected 0 calls, got %d", len(store.committed))
+			}
+		})
+	}
+}
+
+func TestDownloadPreview_PoTArgsPassed(t *testing.T) {
+	tests := []struct {
+		name string
+	}{
+		{name: "PoT args appear before URL when potBaseURL is set"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeRunner{writeBytes: []byte("fake mp3 data")}
+			store := &fakeStorage{}
+			signer := newTestSigner(t)
+			svc := services.NewPythonYouTubeService(nil, signer, store, runner, "http://bgutil:4416")
+
+			if err := svc.DownloadPreview(context.Background(), "abcdefghijk"); err != nil {
+				t.Fatalf("download: %v", err)
+			}
+
+			captured := runner.gotArgs
+			found := false
+			for i, a := range captured {
+				if a == "--extractor-args" && i+1 < len(captured) && captured[i+1] == "youtubepot-bgutilhttp:base_url=http://bgutil:4416" {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("expected --extractor-args with PoT base_url, got: %v", captured)
+			}
+
+			// -- and URL must still appear at the end.
+			dashDashIdx := indexArg(captured, "--")
+			urlIdx := indexArg(captured, "https://youtu.be/abcdefghijk")
+			if dashDashIdx < 0 {
+				t.Error("args: missing -- separator")
+			}
+			if urlIdx < 0 {
+				t.Error("args: URL not found")
+			}
+			if dashDashIdx >= 0 && urlIdx >= 0 && dashDashIdx >= urlIdx {
+				t.Errorf("args: -- (idx %d) must appear before URL (idx %d)", dashDashIdx, urlIdx)
 			}
 		})
 	}

@@ -43,15 +43,24 @@ type Searcher interface {
 
 // PythonYouTubeService handles audio download via yt-dlp and delegates search to a Searcher.
 type PythonYouTubeService struct {
-	search  Searcher
-	signer  *Signer
-	storage Storage
-	runner  CommandRunner
+	search     Searcher
+	signer     *Signer
+	storage    Storage
+	runner     CommandRunner
+	potBaseURL string
 }
 
-// NewPythonYouTubeService returns a PythonYouTubeService with the given search delegate, signer, storage, and command runner.
-func NewPythonYouTubeService(search Searcher, signer *Signer, storage Storage, runner CommandRunner) *PythonYouTubeService {
-	return &PythonYouTubeService{search: search, signer: signer, storage: storage, runner: runner}
+// NewPythonYouTubeService returns a PythonYouTubeService with the given search delegate, signer, storage, command runner, and optional PoT base URL.
+func NewPythonYouTubeService(search Searcher, signer *Signer, storage Storage, runner CommandRunner, potBaseURL string) *PythonYouTubeService {
+	return &PythonYouTubeService{search: search, signer: signer, storage: storage, runner: runner, potBaseURL: potBaseURL}
+}
+
+// potArgs returns the yt-dlp args to enable the bgutil PoT provider, or nil if unconfigured.
+func (s *PythonYouTubeService) potArgs() []string {
+	if s.potBaseURL == "" {
+		return nil
+	}
+	return []string{"--extractor-args", "youtubepot-bgutilhttp:base_url=" + s.potBaseURL}
 }
 
 // Search delegates to the injected Searcher.
@@ -79,14 +88,14 @@ func (s *PythonYouTubeService) DownloadPreview(ctx context.Context, videoID stri
 
 	outPath := filepath.Join(tmpDir, "preview.mp3")
 
-	args := []string{
+	args := append(s.potArgs(), []string{
 		"--download-sections", "*0-30",
 		"-x", "--audio-format", "mp3",
 		"-o", outPath,
 		"--quiet", "--no-warnings",
 		"--", // guards against videoIDs that could be interpreted as flags
 		"https://youtu.be/" + videoID,
-	}
+	}...)
 
 	if err := s.runner.Run(ctx, "yt-dlp", args...); err != nil {
 		return fmt.Errorf("download preview: yt-dlp: %w", err)
@@ -119,13 +128,13 @@ func (s *PythonYouTubeService) DownloadFull(ctx context.Context, videoID string)
 
 	outPath := filepath.Join(tmpDir, "original.wav")
 
-	args := []string{
+	args := append(s.potArgs(), []string{
 		"-x", "--audio-format", "wav",
 		"-o", outPath,
 		"--quiet", "--no-warnings",
 		"--", // guards against videoIDs that could be interpreted as flags
 		"https://youtu.be/" + videoID,
-	}
+	}...)
 
 	if err := s.runner.Run(ctx, "yt-dlp", args...); err != nil {
 		return fmt.Errorf("download full: yt-dlp: %w", err)
