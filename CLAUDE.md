@@ -27,7 +27,7 @@ brew install yt-dlp ffmpeg rubberband
 
 `rubberband` is the CLI that `CLIShifter` (Go) shells out to for pitch shifting; `ffmpeg` handles MP3↔WAV transcoding around it.
 
-**Python 3.12 required** (not 3.13+). Reason: CREPE depends on TensorFlow, which doesn't yet ship wheels for newer Python versions. Match the proven prototype config. Install with `brew install python@3.12`, then `python3.12 -m venv .venv`. Install audio deps (first run downloads PyTorch + Demucs models — slow, ~5-10 min):
+**Python 3.12 required** (not 3.13+). Reason: CREPE depends on TensorFlow, which doesn't yet ship wheels for newer Python versions. Match the proven prototype config. Install with `brew install python@3.12`, then `python3.12 -m venv .venv`. Install audio deps (first run downloads PyTorch — slow, ~5-10 min; BS-Roformer weights are seeded separately via `modal run seed_models.py`):
 
 ```bash
 cd audio-processor-gpu && pip install -r requirements.txt
@@ -62,7 +62,7 @@ Browser (Vue 3)
                     ├── yt-dlp (audio download by videoId — NOT used for search)
                     ├── rubberband + ffmpeg (in-process CLI pitch shift)
                     └── HTTP ──► Python :8090
-                                  ├── Demucs (vocal separation)
+                                  ├── BS-Roformer (vocal separation)
                                   └── CREPE (melody extraction from vocals stem)
 ```
 
@@ -90,19 +90,19 @@ Module path: `cantus/backend`
 
 ## Important Notes
 
-- **Demucs first run**: downloads ~1GB model weights. Subsequent runs are fast.
+- **BS-Roformer ckpt**: ~640 MB, seeded into the Modal Volume once via `modal run seed_models.py`. Subsequent cold starts read from the Volume (~5–10s). Local runs read from `$MODEL_DIR` (default `./tmp/models`).
 - **CREPE first run**: downloads model weights on first use.
 - **raitonoberu/ytmusic for search, yt-dlp for audio**: split intentional. `github.com/raitonoberu/ytmusic` (Go library, drop-in for ytmusicapi) gives song entities + canonical YouTube videoIds in one call; yt-dlp downloads the audio for that videoId. Both gray-area ToS for personal use; both swappable for licensed sources before public launch. Use `--cookies-from-browser chrome` if yt-dlp gets rate-limited.
 - **Video ID validation**: backend validates all video IDs with `^[A-Za-z0-9_-]{11}$` AND requires a valid HMAC sig before any yt-dlp call. Regex first (cheap), sig second.
 - **HMAC sig flow**: `/api/songs/search` returns `{videoId, sig}`; frontend stores both and passes `sig` on every audio call. Handlers use constant-time compare (`hmac.Equal`). Rotating `VIDEO_ID_SIGNING_KEY` invalidates outstanding sigs — users would need to re-search; acceptable.
-- **CREPE runs on isolated vocals** (Demucs output), NOT the full mix — CREPE is monophonic and would track bass/guitar on a full mix.
-- **Semitones capped at ±12** (one octave) — covers practical singing range needs (e.g., A → D = -7 semitones). Original conservative cap of ±5 assumed full-mix shifting; since the full-song path now shifts Demucs-isolated instrumental (no vocals → no formant problem), `CLIShifter` (rubberband) can handle ±12 with only mild artifacts. Beyond ±12 the music genuinely starts sounding wrong; keep the bound.
-- **Cache is permanent**: files under `tmp/cache/` are kept indefinitely. `Storage.Has()` returns true iff the file exists AND is non-zero size (zero-byte = corrupt → regenerate). Rationale: re-running Demucs/CREPE on GPU is far more expensive than storage. Phase 2 (cloud R2) will add LRU eviction once we approach the 10GB free tier; until then, simplicity wins.
+- **CREPE runs on isolated vocals** (BS-Roformer output), NOT the full mix — CREPE is monophonic and would track bass/guitar on a full mix.
+- **Semitones capped at ±12** (one octave) — covers practical singing range needs (e.g., A → D = -7 semitones). Original conservative cap of ±5 assumed full-mix shifting; since the full-song path now shifts BS-Roformer-isolated instrumental (no vocals → no formant problem), `CLIShifter` (rubberband) can handle ±12 with only mild artifacts. Beyond ±12 the music genuinely starts sounding wrong; keep the bound.
+- **Cache is permanent**: files under `tmp/cache/` are kept indefinitely. `Storage.Has()` returns true iff the file exists AND is non-zero size (zero-byte = corrupt → regenerate). Rationale: re-running BS-Roformer/CREPE on GPU is far more expensive than storage. Phase 2 (cloud R2) will add LRU eviction once we approach the 10GB free tier; until then, simplicity wins.
 - **Concurrent generate jobs dedup by videoID**: `JobRunner.Submit(videoID, semitones)` uses a `sync.Map` keyed by videoID. A second Submit for the same videoID while a job is in flight returns the existing jobID — never spawns a duplicate pipeline. Different semitones for the same videoID also dedup at this layer; the cheap Shift stage just runs again from cache once Separate is done.
 - **JobStore record TTL is separate (1h)** — that cleanup applies to in-memory job status records, not cache files.
 - **tmp/ dirs**: gitignored. `tmp/cache/` holds the permanent cache; other `tmp/` files are scratch working space.
 - **YouTubeService interface** in `backend/services/youtube.go`: swap yt-dlp for a licensed provider without touching handler code.
-- **ProcessorClient** in `backend/services/processor_url.go`: single URL-based client that talks to the Python GPU service for Separate (Demucs) and Melody (CREPE). Configured via `PROCESSOR_URL` (defaults to `PYTHON_PROCESSOR_URL`).
+- **ProcessorClient** in `backend/services/processor_url.go`: single URL-based client that talks to the Python GPU service for Separate (BS-Roformer) and Melody (CREPE). Configured via `PROCESSOR_URL` (defaults to `PYTHON_PROCESSOR_URL`).
 - **In-process audio shift** in `backend/services/shift.go`: `CLIShifter` shells to `rubberband` (+ `ffmpeg` for MP3↔WAV transcoding). Replaces the prior `/shift` Python endpoint. Stage 4 of `job_runner` and both shift paths in `preview_shift.go` stream from `Storage.Open` → tempfile → `Shifter.Shift` → `Storage.Commit`; no URL handoff needed for local-process work.
 - **In-process YouTube Music search** in `backend/services/ytmusic_search.go`: wraps `github.com/raitonoberu/ytmusic` (Go drop-in for ytmusicapi). Same TTL cache (600s, 256 entries) and non-studio regex filter as before.
 - **Storage interface** in `backend/services/storage.go`: handlers operate on opaque keys via `Key / Has / SignGet / SignPut / Commit / Open / Verify`. Python services receive presigned URLs (never filesystem paths); they stream-download input, process locally, then stream-upload output. `LocalDiskStorage` mints `/internal/blob/{key}` HMAC-gated URLs in local dev; `R2Storage` mints real R2 presigned URLs via `aws-sdk-go-v2`. Selected by `STORAGE_BACKEND` (`local` or `r2`).
