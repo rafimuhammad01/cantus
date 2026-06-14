@@ -2,232 +2,52 @@ package services_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 	"testing"
 
+	"cantus/backend/models"
 	"cantus/backend/services"
 )
 
-func TestPythonYouTubeService_Search(t *testing.T) {
-	const (
-		videoID1 = "dQw4w9WgXcQ"
-		videoID2 = "aaaaaaaaaaa"
-	)
-
-	signer := newTestSigner(t)
-	sig1 := signer.Sign(videoID1)
-	sig2 := signer.Sign(videoID2)
-
-	twoItemBody := `{
-		"items": [
-			{"videoId":"dQw4w9WgXcQ","title":"Never Gonna Give You Up","artist":"Rick Astley","album":"Whenever You Need Somebody","duration_sec":213,"thumbnail_url":"https://example.com/1.jpg"},
-			{"videoId":"aaaaaaaaaaa","title":"Song Two","artist":"Artist Two","album":null,"duration_sec":180,"thumbnail_url":"https://example.com/2.jpg"}
-		],
-		"has_more": true
-	}`
-
+func TestPythonYouTubeService_SearchDelegates(t *testing.T) {
 	tests := []struct {
-		name        string
-		query       string
-		limit       int
-		offset      int
-		transport   roundTripperFunc
-		wantErr     bool
-		errContains string
-		wantLen     int
-		wantHasMore bool
-		wantSigs    []string
+		name    string
+		page    services.SearchPage
+		wantIDs []string
 	}{
 		{
-			name:   "happy path two items has_more true",
-			query:  "rick astley",
-			limit:  10,
-			offset: 0,
-			transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				if r.Method != http.MethodPost {
-					t.Errorf("method: got %q, want POST", r.Method)
-				}
-				if r.URL.Path != "/search" {
-					t.Errorf("path: got %q, want /search", r.URL.Path)
-				}
-				if ct := r.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
-					t.Errorf("Content-Type: got %q, want application/json", ct)
-				}
-				var body struct {
-					Query  string `json:"query"`
-					Limit  int    `json:"limit"`
-					Offset int    `json:"offset"`
-				}
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					t.Errorf("decode request body: %v", err)
-				}
-				if body.Query != "rick astley" {
-					t.Errorf("body.query: got %q, want %q", body.Query, "rick astley")
-				}
-				if body.Limit != 10 {
-					t.Errorf("body.limit: got %d, want 10", body.Limit)
-				}
-				if body.Offset != 0 {
-					t.Errorf("body.offset: got %d, want 0", body.Offset)
-				}
-				return makeResponse(http.StatusOK, twoItemBody), nil
-			}),
-			wantErr:     false,
-			wantLen:     2,
-			wantHasMore: true,
-			wantSigs:    []string{sig1, sig2},
-		},
-		{
-			name:   "invalid videoID in one item is dropped",
-			query:  "test",
-			limit:  5,
-			offset: 0,
-			transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				body := `{
-					"items": [
-						{"videoId":"dQw4w9WgXcQ","title":"Good","artist":"A","album":null,"duration_sec":100,"thumbnail_url":"https://example.com/t.jpg"},
-						{"videoId":"bad/slash!!","title":"Bad","artist":"B","album":null,"duration_sec":100,"thumbnail_url":"https://example.com/t.jpg"}
-					],
-					"has_more": false
-				}`
-				return makeResponse(http.StatusOK, body), nil
-			}),
-			wantErr:     false,
-			wantLen:     1,
-			wantHasMore: false,
-			wantSigs:    []string{sig1},
-		},
-		{
-			name:   "empty items returns empty slice not nil",
-			query:  "nothing",
-			limit:  5,
-			offset: 0,
-			transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				return makeResponse(http.StatusOK, `{"items":[],"has_more":false}`), nil
-			}),
-			wantErr:     false,
-			wantLen:     0,
-			wantHasMore: false,
-		},
-		{
-			name:   "upstream 500 returns error with status code",
-			query:  "test",
-			limit:  5,
-			offset: 0,
-			transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				return makeResponse(http.StatusInternalServerError, `{"error":"boom"}`), nil
-			}),
-			wantErr:     true,
-			errContains: "500",
-		},
-		{
-			name:   "upstream 400 returns error with status code",
-			query:  "test",
-			limit:  5,
-			offset: 0,
-			transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				return makeResponse(http.StatusBadRequest, `{"error":"bad"}`), nil
-			}),
-			wantErr:     true,
-			errContains: "400",
-		},
-		{
-			name:   "malformed JSON body returns error",
-			query:  "test",
-			limit:  5,
-			offset: 0,
-			transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				return makeResponse(http.StatusOK, "not json"), nil
-			}),
-			wantErr: true,
-		},
-		{
-			name:   "network error is returned",
-			query:  "test",
-			limit:  5,
-			offset: 0,
-			transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				return nil, errors.New("net down")
-			}),
-			wantErr:     true,
-			errContains: "net down",
+			name: "returns whatever YTMusicSearch returns",
+			page: services.SearchPage{
+				Items: []models.SearchResult{
+					{VideoID: "aaaaaaaaaaa", Sig: "sig"},
+				},
+				HasMore: false,
+			},
+			wantIDs: []string{"aaaaaaaaaaa"},
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := &http.Client{Transport: tt.transport}
-			svc := services.NewPythonYouTubeService("http://localhost:8090", client, signer, nil, nil)
-
-			page, err := svc.Search(context.Background(), tt.query, tt.limit, tt.offset)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("Search: got nil error, want error")
-				}
-				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
-					t.Errorf("error %q does not contain %q", err.Error(), tt.errContains)
-				}
-				return
-			}
-
+			fake := &fakeSearchDelegate{page: tt.page}
+			svc := services.NewPythonYouTubeService(fake, nil, nil, services.ExecRunner{})
+			got, err := svc.Search(context.Background(), "q", 5, 0)
 			if err != nil {
-				t.Fatalf("Search: unexpected error: %v", err)
+				t.Fatalf("Search: %v", err)
 			}
-			if len(page.Items) != tt.wantLen {
-				t.Errorf("len(Items): got %d, want %d", len(page.Items), tt.wantLen)
-			}
-			if page.HasMore != tt.wantHasMore {
-				t.Errorf("HasMore: got %v, want %v", page.HasMore, tt.wantHasMore)
-			}
-			for i, wantSig := range tt.wantSigs {
-				if i >= len(page.Items) {
-					break
-				}
-				if page.Items[i].Sig != wantSig {
-					t.Errorf("Items[%d].Sig: got %q, want %q", i, page.Items[i].Sig, wantSig)
-				}
-			}
-			if tt.wantLen == 0 && page.Items == nil {
-				t.Errorf("Items: got nil, want empty slice")
+			if len(got.Items) != len(tt.wantIDs) {
+				t.Fatalf("len: got %d, want %d", len(got.Items), len(tt.wantIDs))
 			}
 		})
 	}
 }
 
-func TestPythonYouTubeService_Search_ContextCanceled(t *testing.T) {
-	tests := []struct {
-		name string
-	}{
-		{name: "canceled context returns context.Canceled"},
-	}
+type fakeSearchDelegate struct{ page services.SearchPage }
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			signer := newTestSigner(t)
-			transport := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				return makeResponse(http.StatusOK, `{"items":[],"has_more":false}`), nil
-			})
-			client := &http.Client{Transport: transport}
-			svc := services.NewPythonYouTubeService("http://localhost:8090", client, signer, nil, nil)
-
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
-
-			_, err := svc.Search(ctx, "test", 5, 0)
-			if err == nil {
-				t.Fatalf("Search with canceled ctx: got nil error, want error")
-			}
-			if !errors.Is(err, context.Canceled) {
-				t.Errorf("error %v: expected errors.Is(err, context.Canceled) to be true", err)
-			}
-		})
-	}
+func (f *fakeSearchDelegate) Search(_ context.Context, _ string, _, _ int) (services.SearchPage, error) {
+	return f.page, nil
 }
 
 // fakeRunner is a test double for CommandRunner that records invocations and
@@ -346,8 +166,7 @@ func TestPythonYouTubeService_DownloadPreview(t *testing.T) {
 
 			signer := newTestSigner(t)
 			svc := services.NewPythonYouTubeService(
-				"http://localhost:8090",
-				&http.Client{},
+				nil,
 				signer,
 				store,
 				runner,
@@ -450,8 +269,7 @@ func TestPythonYouTubeService_DownloadPreview_ContextCanceled(t *testing.T) {
 			store := &fakeStorage{}
 			signer := newTestSigner(t)
 			svc := services.NewPythonYouTubeService(
-				"http://localhost:8090",
-				&http.Client{},
+				nil,
 				signer,
 				store,
 				runner,
@@ -542,8 +360,7 @@ func TestPythonYouTubeService_DownloadFull(t *testing.T) {
 
 			signer := newTestSigner(t)
 			svc := services.NewPythonYouTubeService(
-				"http://localhost:8090",
-				&http.Client{},
+				nil,
 				signer,
 				store,
 				runner,
@@ -644,8 +461,7 @@ func TestPythonYouTubeService_DownloadFull_ContextCanceled(t *testing.T) {
 			store := &fakeStorage{}
 			signer := newTestSigner(t)
 			svc := services.NewPythonYouTubeService(
-				"http://localhost:8090",
-				&http.Client{},
+				nil,
 				signer,
 				store,
 				runner,

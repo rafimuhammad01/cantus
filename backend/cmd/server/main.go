@@ -65,13 +65,8 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	svc := services.NewPythonYouTubeService(
-		cfg.PythonProcessorURL,
-		&http.Client{Timeout: 30 * time.Second},
-		signer,
-		storage,
-		services.ExecRunner{},
-	)
+	searchSvc := services.NewYTMusicSearchProd(signer, 600*time.Second, 256)
+	svc := services.NewPythonYouTubeService(searchSvc, signer, storage, services.ExecRunner{})
 
 	var origins []string
 	for _, o := range strings.Split(cfg.AllowedOrigins, ",") {

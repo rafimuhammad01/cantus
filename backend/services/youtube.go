@@ -1,11 +1,8 @@
 package services
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,99 +36,27 @@ type SearchPage struct {
 	HasMore bool
 }
 
-// PythonYouTubeService proxies search to the FastAPI audio-processor and HMAC-signs results.
+// Searcher is implemented by YTMusicSearch and any other Search backend.
+type Searcher interface {
+	Search(ctx context.Context, query string, limit, offset int) (SearchPage, error)
+}
+
+// PythonYouTubeService handles audio download via yt-dlp and delegates search to a Searcher.
 type PythonYouTubeService struct {
-	baseURL string
-	client  *http.Client
+	search  Searcher
 	signer  *Signer
 	storage Storage
 	runner  CommandRunner
 }
 
-// NewPythonYouTubeService returns a PythonYouTubeService configured with the given base URL, HTTP client, signer, storage, and command runner.
-func NewPythonYouTubeService(baseURL string, client *http.Client, signer *Signer, storage Storage, runner CommandRunner) *PythonYouTubeService {
-	return &PythonYouTubeService{
-		baseURL: baseURL,
-		client:  client,
-		signer:  signer,
-		storage: storage,
-		runner:  runner,
-	}
+// NewPythonYouTubeService returns a PythonYouTubeService with the given search delegate, signer, storage, and command runner.
+func NewPythonYouTubeService(search Searcher, signer *Signer, storage Storage, runner CommandRunner) *PythonYouTubeService {
+	return &PythonYouTubeService{search: search, signer: signer, storage: storage, runner: runner}
 }
 
-// upstreamItem is the JSON shape returned by the Python /search endpoint per item.
-type upstreamItem struct {
-	VideoID      string  `json:"videoId"`
-	Title        string  `json:"title"`
-	Artist       string  `json:"artist"`
-	Album        *string `json:"album"`
-	DurationSec  int     `json:"duration_sec"`
-	ThumbnailURL string  `json:"thumbnail_url"`
-}
-
-// upstreamResponse is the top-level JSON shape returned by the Python /search endpoint.
-type upstreamResponse struct {
-	Items   []upstreamItem `json:"items"`
-	HasMore bool           `json:"has_more"`
-}
-
-// Search calls the Python /search endpoint and returns HMAC-signed results, dropping invalid video IDs.
+// Search delegates to the injected Searcher.
 func (s *PythonYouTubeService) Search(ctx context.Context, query string, limit, offset int) (SearchPage, error) {
-	if err := ctx.Err(); err != nil {
-		return SearchPage{}, fmt.Errorf("youtube search: %w", err)
-	}
-
-	reqBody, err := json.Marshal(map[string]any{
-		"query":  query,
-		"limit":  limit,
-		"offset": offset,
-	})
-	if err != nil {
-		return SearchPage{}, fmt.Errorf("youtube search: marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+"/search", bytes.NewReader(reqBody))
-	if err != nil {
-		return SearchPage{}, fmt.Errorf("youtube search: build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return SearchPage{}, fmt.Errorf("youtube search: do request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return SearchPage{}, fmt.Errorf("youtube search: upstream status %d", resp.StatusCode)
-	}
-
-	var upstream upstreamResponse
-	if err := json.NewDecoder(resp.Body).Decode(&upstream); err != nil {
-		return SearchPage{}, fmt.Errorf("youtube search: decode response: %w", err)
-	}
-
-	mapped := make([]models.SearchResult, 0, len(upstream.Items))
-	for _, item := range upstream.Items {
-		if !ValidVideoID(item.VideoID) {
-			continue
-		}
-		album := ""
-		if item.Album != nil {
-			album = *item.Album
-		}
-		mapped = append(mapped, models.SearchResult{
-			VideoID:      item.VideoID,
-			Sig:          s.signer.Sign(item.VideoID),
-			Title:        item.Title,
-			Artist:       item.Artist,
-			Album:        album,
-			DurationSec:  item.DurationSec,
-			ThumbnailURL: item.ThumbnailURL,
-		})
-	}
-
-	return SearchPage{Items: mapped, HasMore: upstream.HasMore}, nil
+	return s.search.Search(ctx, query, limit, offset)
 }
 
 // DownloadPreview downloads the first 30 seconds of audio for videoID via yt-dlp
