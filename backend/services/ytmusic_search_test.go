@@ -30,6 +30,17 @@ func (f *fakePager) Next() (*ytmusic.SearchResult, error) {
 	return &ytmusic.SearchResult{Tracks: page}, nil
 }
 
+// infiniteLivePager always returns a page of "(Live)" tracks that all fail the
+// non-studio filter. Without a page-count cap the drain loop would spin forever.
+type infiniteLivePager struct{}
+
+func (p *infiniteLivePager) Next() (*ytmusic.SearchResult, error) {
+	return &ytmusic.SearchResult{Tracks: []*ytmusic.TrackItem{
+		track("aaaaaaaaaaa", "Yesterday (Live)", "Beatles", "", 180, "u"),
+		track("bbbbbbbbbbb", "Yesterday (Live)", "Beatles", "", 180, "u"),
+	}}, nil
+}
+
 func track(videoID, title, artist, album string, durSec int, thumbURL string) *ytmusic.TrackItem {
 	return &ytmusic.TrackItem{
 		VideoID:    videoID,
@@ -130,6 +141,42 @@ func TestYTMusicSearch(t *testing.T) {
 				if gotIDs[i] != tt.wantIDs[i] {
 					t.Fatalf("id[%d]: got %q, want %q", i, gotIDs[i], tt.wantIDs[i])
 				}
+			}
+			if got.HasMore != tt.wantHasMore {
+				t.Errorf("HasMore: got %v, want %v", got.HasMore, tt.wantHasMore)
+			}
+		})
+	}
+}
+
+// TestYTMusicSearch_MaxPagesCap verifies the drain loop exits rather than
+// spinning forever when every page only contains tracks that fail the
+// non-studio filter.
+func TestYTMusicSearch_MaxPagesCap(t *testing.T) {
+	tests := []struct {
+		name        string
+		wantItems   int
+		wantHasMore bool
+	}{
+		{
+			name:        "infinite live-only pager is bounded by maxPages and returns empty",
+			wantItems:   0,
+			wantHasMore: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			signer := newTestSigner(t)
+			s := services.NewYTMusicSearch(
+				func(string) services.SearchPager { return &infiniteLivePager{} },
+				signer, 600*time.Second, 256,
+			)
+			got, err := s.Search(context.Background(), "yesterday", 5, 0)
+			if err != nil {
+				t.Fatalf("Search: unexpected error: %v", err)
+			}
+			if len(got.Items) != tt.wantItems {
+				t.Errorf("items: got %d, want %d", len(got.Items), tt.wantItems)
 			}
 			if got.HasMore != tt.wantHasMore {
 				t.Errorf("HasMore: got %v, want %v", got.HasMore, tt.wantHasMore)

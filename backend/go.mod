@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.24
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.103.3
 	github.com/go-chi/cors v1.2.2
+	github.com/raitonoberu/ytmusic v0.0.0-20240324143733-0e5780514b1d
 	github.com/rs/zerolog v1.35.1
 )
 
@@ -30,6 +31,5 @@ require (
 	github.com/aws/smithy-go v1.27.1 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/raitonoberu/ytmusic v0.0.0-20240324143733-0e5780514b1d // indirect
 	golang.org/x/sys v0.29.0 // indirect
 )

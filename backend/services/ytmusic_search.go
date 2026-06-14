@@ -89,7 +89,14 @@ func (s *YTMusicSearch) Search(ctx context.Context, query string, limit, offset 
 		pager := s.factory(query)
 		var mapped []models.SearchResult
 		exhausted := false
+		const maxPages = 10
+		pages := 0
 		for len(mapped) < need {
+			if pages >= maxPages {
+				exhausted = true
+				break
+			}
+			pages++
 			res, err := pager.Next()
 			if err != nil {
 				return SearchPage{}, fmt.Errorf("ytmusic search: %w", err)
