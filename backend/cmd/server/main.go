@@ -86,8 +86,10 @@ func main() {
 	jobStore := services.NewJobStore(1 * time.Hour)
 	jobStore.StartCleanup(ctx, 5*time.Minute)
 
+	shifter := services.NewCLIShifter("rubberband", "ffmpeg", services.ExecRunner{})
+
 	maxJobs := cfg.MaxConcurrentJobs
-	jobRunner := services.NewJobRunner(svc, storage, cpuProc, gpuProc, jobStore, maxJobs)
+	jobRunner := services.NewJobRunner(svc, storage, gpuProc, shifter, jobStore, maxJobs)
 
 	r := api.NewRouter(origins, log, svc, signer, storage, cpuProc, gpuProc, jobRunner, jobStore, blobTokener)
 

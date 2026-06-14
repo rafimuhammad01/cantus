@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"io"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -17,8 +19,8 @@ import (
 type JobRunner struct {
 	ytSvc     YouTubeService
 	storage   Storage
-	cpu       CPUProcessorClient
 	gpu       GPUProcessorClient
+	shifter   Shifter
 	jobStore  *JobStore
 	semaphore chan struct{} // capacity = maxConcurrent
 	inflight  sync.Map      // key: videoID (string) → value: jobID (string)
@@ -28,8 +30,8 @@ type JobRunner struct {
 func NewJobRunner(
 	ytSvc YouTubeService,
 	storage Storage,
-	cpu CPUProcessorClient,
 	gpu GPUProcessorClient,
+	shifter Shifter,
 	jobStore *JobStore,
 	maxConcurrent int,
 ) *JobRunner {
@@ -37,7 +39,7 @@ func NewJobRunner(
 		maxConcurrent = 1
 	}
 	return &JobRunner{
-		ytSvc: ytSvc, storage: storage, cpu: cpu, gpu: gpu,
+		ytSvc: ytSvc, storage: storage, gpu: gpu, shifter: shifter,
 		jobStore:  jobStore,
 		semaphore: make(chan struct{}, maxConcurrent),
 	}
@@ -169,18 +171,42 @@ func (r *JobRunner) Run(ctx context.Context, jobID, videoID string, semitones in
 	shiftedHas, _ := r.storage.Has(ctx, shiftedKey)
 	if !shiftedHas {
 		noVocalsKey := r.storage.Key(videoID, "no_vocals.wav")
-		inURL, err := r.storage.SignGet(ctx, noVocalsKey)
+		rc, err := r.storage.Open(ctx, noVocalsKey)
 		if err != nil {
-			r.fail(jobID, "sign get failed: "+err.Error())
+			r.fail(jobID, "open no_vocals: "+err.Error())
 			return
 		}
-		outURL, err := r.storage.SignPut(ctx, shiftedKey)
+		scratchIn, err := os.CreateTemp("", "cantus-shift-in-*.wav")
 		if err != nil {
-			r.fail(jobID, "sign put failed: "+err.Error())
+			_ = rc.Close()
+			r.fail(jobID, "tempfile in: "+err.Error())
 			return
 		}
-		if err := r.cpu.Shift(ctx, inURL, outURL, float64(semitones)); err != nil {
+		if _, err := io.Copy(scratchIn, rc); err != nil {
+			_ = rc.Close()
+			_ = scratchIn.Close()
+			_ = os.Remove(scratchIn.Name())
+			r.fail(jobID, "copy no_vocals to scratch: "+err.Error())
+			return
+		}
+		_ = rc.Close()
+		_ = scratchIn.Close()
+		defer func() { _ = os.Remove(scratchIn.Name()) }()
+
+		scratchOut, err := os.CreateTemp("", "cantus-shift-out-*.mp3")
+		if err != nil {
+			r.fail(jobID, "tempfile out: "+err.Error())
+			return
+		}
+		_ = scratchOut.Close()
+		defer func() { _ = os.Remove(scratchOut.Name()) }()
+
+		if err := r.shifter.Shift(ctx, scratchIn.Name(), scratchOut.Name(), float64(semitones)); err != nil {
 			r.fail(jobID, "shift failed: "+err.Error())
+			return
+		}
+		if err := r.storage.Commit(ctx, shiftedKey, scratchOut.Name()); err != nil {
+			r.fail(jobID, "commit shifted: "+err.Error())
 			return
 		}
 		if err := r.storage.Verify(ctx, shiftedKey); err != nil {
