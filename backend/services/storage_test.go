@@ -164,7 +164,7 @@ func TestLocalDiskStorage_Has(t *testing.T) {
 			key := s.Key(videoID, "preview.mp3")
 
 			if tt.create {
-				absPath := s.FilesystemPathForLocalProcessor(key)
+				absPath := filepath.Join(root, filepath.FromSlash(key))
 				writeFileAged(t, absPath, tt.content, tt.age)
 			}
 
@@ -202,14 +202,15 @@ func TestLocalDiskStorage_Commit(t *testing.T) {
 		objectName string
 		// setup runs before Commit. Returns (localPath to pass to Commit, srcPath
 		// to assert is removed after the rename, or "" to skip the source-removed check).
-		setup func(t *testing.T, s *services.LocalDiskStorage, key string) (localPath, srcPath string)
+		// root is the storage root so tests can compute expected target paths directly.
+		setup func(t *testing.T, root string, key string) (localPath, srcPath string)
 		// extraAssert runs after the post-commit content check, for case-specific assertions.
 		extraAssert func(t *testing.T, target, srcPath string)
 	}{
 		{
 			name:       "moves external file into cache",
 			objectName: "preview.mp3",
-			setup: func(t *testing.T, _ *services.LocalDiskStorage, _ string) (string, string) {
+			setup: func(t *testing.T, _ string, _ string) (string, string) {
 				src := stageSourceFile(t)
 				return src, src
 			},
@@ -222,8 +223,8 @@ func TestLocalDiskStorage_Commit(t *testing.T) {
 		{
 			name:       "no-op when file already at target path",
 			objectName: "preview.mp3",
-			setup: func(t *testing.T, s *services.LocalDiskStorage, key string) (string, string) {
-				target := s.FilesystemPathForLocalProcessor(key)
+			setup: func(t *testing.T, root string, key string) (string, string) {
+				target := filepath.Join(root, filepath.FromSlash(key))
 				writeFileAged(t, target, wantContent, 0)
 				return target, ""
 			},
@@ -231,9 +232,9 @@ func TestLocalDiskStorage_Commit(t *testing.T) {
 		{
 			name:       "creates parent dirs",
 			objectName: "stems/vocals.mp3",
-			setup: func(t *testing.T, s *services.LocalDiskStorage, key string) (string, string) {
+			setup: func(t *testing.T, root string, key string) (string, string) {
 				src := stageSourceFile(t)
-				parentDir := filepath.Dir(s.FilesystemPathForLocalProcessor(key))
+				parentDir := filepath.Dir(filepath.Join(root, filepath.FromSlash(key)))
 				if _, err := os.Stat(parentDir); err == nil {
 					t.Fatalf("precondition failed: parent dir %q already exists", parentDir)
 				}
@@ -253,13 +254,13 @@ func TestLocalDiskStorage_Commit(t *testing.T) {
 			videoID := "videoCommit" + string(rune('A'+i))
 			key := s.Key(videoID, tt.objectName)
 
-			localPath, srcPath := tt.setup(t, s, key)
+			localPath, srcPath := tt.setup(t, root, key)
 
 			if err := s.Commit(ctx, key, localPath); err != nil {
 				t.Fatalf("Commit: unexpected error: %v", err)
 			}
 
-			target := s.FilesystemPathForLocalProcessor(key)
+			target := filepath.Join(root, filepath.FromSlash(key))
 			got, err := os.ReadFile(target)
 			if err != nil {
 				t.Fatalf("ReadFile target after Commit: %v", err)
@@ -317,7 +318,7 @@ func TestLocalDiskStorage_Open(t *testing.T) {
 			key := s.Key(videoID, "preview.mp3")
 
 			if tt.create {
-				absPath := s.FilesystemPathForLocalProcessor(key)
+				absPath := filepath.Join(root, filepath.FromSlash(key))
 				writeFileAged(t, absPath, tt.content, 0)
 			}
 

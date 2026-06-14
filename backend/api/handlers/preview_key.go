@@ -21,14 +21,10 @@ type previewKeyResponse struct {
 // CREPE on the full isolated vocals stem, stored in melody.json. This handler
 // just re-exposes melody.json's key when present, returning "" otherwise so
 // the UI can hide the label until /api/generate has produced melody.json.
-//
-// ytSvc and processor are kept in the signature for API stability with the
-// router wiring; they're no longer used because no chroma estimation is run.
 func PreviewKey(
 	signer *services.Signer,
 	storage services.Storage,
 	_ services.YouTubeService,
-	_ services.ProcessorClient,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		videoID := chi.URLParam(r, "videoId")

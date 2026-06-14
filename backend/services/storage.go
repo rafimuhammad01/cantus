@@ -166,9 +166,3 @@ func (s *LocalDiskStorage) Verify(ctx context.Context, key string) error {
 	}
 	return nil
 }
-
-// FilesystemPathForLocalProcessor is a transitional escape hatch for code paths
-// that still call the path-based ProcessorClient. Removed in plan #4.
-func (s *LocalDiskStorage) FilesystemPathForLocalProcessor(key string) string {
-	return s.absPath(key)
-}

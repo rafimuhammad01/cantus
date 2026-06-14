@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -9,6 +10,17 @@ import (
 	"cantus/backend/logger"
 	"cantus/backend/services"
 )
+
+// writeToFile copies data from rc into the file at path (creating it if needed).
+func writeToFile(path string, rc io.Reader) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	_, err = io.Copy(f, rc)
+	return err
+}
 
 type previewStemsRequest struct {
 	VideoID string `json:"video_id"`
@@ -23,7 +35,6 @@ func PreviewStems(
 	signer *services.Signer,
 	storage services.Storage,
 	ytSvc services.YouTubeService,
-	processor services.ProcessorClient, // used by Stage 4 until Task 8
 	gpu services.GPUProcessorClient,
 	transcode services.TranscodeFunc,
 ) http.HandlerFunc {
@@ -139,14 +150,6 @@ func PreviewStems(
 
 		// Stage 3 — ensure preview-stems/no_vocals.mp3 (ffmpeg transcode of no_vocals.wav).
 		if !mp3Has {
-			local, ok := storage.(*services.LocalDiskStorage)
-			if !ok {
-				http.Error(w, "processor unavailable in this storage mode", http.StatusInternalServerError)
-				return
-			}
-
-			noVocalsWav := local.FilesystemPathForLocalProcessor(local.Key(videoID, "preview-stems/no_vocals.wav"))
-
 			tmpDir, err := os.MkdirTemp("", "cantus-preview-transcode-*")
 			if err != nil {
 				log.Error().Err(err).Str("videoId", videoID).Msg("os.MkdirTemp failed")
@@ -155,9 +158,26 @@ func PreviewStems(
 			}
 			defer func() { _ = os.RemoveAll(tmpDir) }()
 
+			// Copy the WAV from storage to a local temp file so ffmpeg can read it.
+			noVocalsWavKey := storage.Key(videoID, "preview-stems/no_vocals.wav")
+			rc, err := storage.Open(ctx, noVocalsWavKey)
+			if err != nil {
+				log.Error().Err(err).Str("videoId", videoID).Msg("storage.Open (no_vocals.wav) failed")
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage open failed"})
+				return
+			}
+			tmpWav := filepath.Join(tmpDir, "no_vocals.wav")
+			if err := writeToFile(tmpWav, rc); err != nil {
+				_ = rc.Close()
+				log.Error().Err(err).Str("videoId", videoID).Msg("copy no_vocals.wav to temp failed")
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage read failed"})
+				return
+			}
+			_ = rc.Close()
+
 			tmpMp3 := filepath.Join(tmpDir, "no_vocals.mp3")
 
-			if err := transcode(ctx, noVocalsWav, tmpMp3); err != nil {
+			if err := transcode(ctx, tmpWav, tmpMp3); err != nil {
 				log.Error().Err(err).Str("videoId", videoID).Msg("transcode (no_vocals.mp3) failed")
 				writeJSON(w, http.StatusBadGateway, errorResponse{Error: "transcode failed"})
 				return

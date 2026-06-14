@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -37,29 +35,10 @@ func (f *fakeYouTubeKey) DownloadPreview(_ context.Context, videoID string) erro
 
 func (f *fakeYouTubeKey) DownloadFull(_ context.Context, _ string) error { return nil }
 
-// fakeProcKey is a test double for services.ProcessorClient, used in preview_key tests.
-type fakeProcKey struct {
-	key       string
-	err       error
-	callCount int
-	lastPath  string
-}
-
-func (f *fakeProcKey) Shift(_ context.Context, _, _ string, _ float64) error { return nil }
-func (f *fakeProcKey) Separate(_ context.Context, _, _ string) (string, string, error) {
-	return "", "", nil
-}
-func (f *fakeProcKey) Melody(_ context.Context, _, _ string) error { return nil }
-func (f *fakeProcKey) PreviewKey(_ context.Context, path string) (string, error) {
-	f.callCount++
-	f.lastPath = path
-	return f.key, f.err
-}
-
 // previewKeyRouter wires a chi router with the PreviewKey handler at /api/preview-key/{videoId}.
-func previewKeyRouter(signer *services.Signer, storage services.Storage, yt services.YouTubeService, proc services.ProcessorClient) *chi.Mux {
+func previewKeyRouter(signer *services.Signer, storage services.Storage, yt services.YouTubeService) *chi.Mux {
 	r := chi.NewRouter()
-	r.Get("/api/preview-key/{videoId}", handlers.PreviewKey(signer, storage, yt, proc))
+	r.Get("/api/preview-key/{videoId}", handlers.PreviewKey(signer, storage, yt))
 	return r
 }
 
@@ -73,6 +52,12 @@ func newKeyStorage(t *testing.T) *services.LocalDiskStorage {
 	return st
 }
 
+// commitKeyFile writes content into storage at the given key for pre-staging test data.
+func commitKeyFile(t *testing.T, st *services.LocalDiskStorage, videoID, name string, content []byte) {
+	t.Helper()
+	commitToStorage(t, st, st.Key(videoID, name), content)
+}
+
 func TestPreviewKeyHandler(t *testing.T) {
 	const validID = "dQw4w9WgXcQ"
 
@@ -83,113 +68,99 @@ func TestPreviewKeyHandler(t *testing.T) {
 		name string
 		url  string
 
-		// setup configures storage, fake YouTube, and fake processor before the request.
-		setup func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey)
+		// setup configures storage and fake YouTube before the request.
+		setup func(t *testing.T) (services.Storage, *fakeYouTubeKey)
 
-		wantStatus        int
-		wantBodyContains  string
-		wantKey           string
-		wantYTCallCount   int
-		wantProcCallCount int
-		wantCachedAfter   bool // assert preview-key.json is in storage after request
+		wantStatus       int
+		wantBodyContains string
+		wantKey          string
+		wantYTCallCount  int
+		wantCachedAfter  bool // assert preview-key.json is in storage after request
 	}{
 		{
 			name: "melody.json present returns its key",
 			url:  "/api/preview-key/" + validID + "?sig=" + validSig,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey) {
 				st := newKeyStorage(t)
 				// Pre-stage melody.json (CREPE on isolated full-song vocals — the one accurate source).
-				melodyPath := st.FilesystemPathForLocalProcessor(st.Key(validID, "melody.json"))
-				_ = os.MkdirAll(filepath.Dir(melodyPath), 0o755)
-				_ = os.WriteFile(melodyPath, []byte(`{"key":"F major"}`), 0o644)
-				return st, &fakeYouTubeKey{}, &fakeProcKey{}
+				commitKeyFile(t, st, validID, "melody.json", []byte(`{"key":"F major"}`))
+				return st, &fakeYouTubeKey{}
 			},
-			wantStatus:        http.StatusOK,
-			wantKey:           "F major",
-			wantYTCallCount:   0,
-			wantProcCallCount: 0,
+			wantStatus:      http.StatusOK,
+			wantKey:         "F major",
+			wantYTCallCount: 0,
 		},
 		{
 			name: "melody.json absent returns empty key (UI hides the label)",
 			url:  "/api/preview-key/" + validID + "?sig=" + validSig,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey) {
 				// Empty storage — no melody.json (song hasn't been generated yet).
-				return newKeyStorage(t), &fakeYouTubeKey{}, &fakeProcKey{}
+				return newKeyStorage(t), &fakeYouTubeKey{}
 			},
-			wantStatus:        http.StatusOK,
-			wantKey:           "",
-			wantYTCallCount:   0,
-			wantProcCallCount: 0,
+			wantStatus:      http.StatusOK,
+			wantKey:         "",
+			wantYTCallCount: 0,
 		},
 		{
 			name: "melody.json with empty key field returns empty key",
 			url:  "/api/preview-key/" + validID + "?sig=" + validSig,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey) {
 				st := newKeyStorage(t)
-				melodyPath := st.FilesystemPathForLocalProcessor(st.Key(validID, "melody.json"))
-				_ = os.MkdirAll(filepath.Dir(melodyPath), 0o755)
-				_ = os.WriteFile(melodyPath, []byte(`{"key":""}`), 0o644)
-				return st, &fakeYouTubeKey{}, &fakeProcKey{}
+				commitKeyFile(t, st, validID, "melody.json", []byte(`{"key":""}`))
+				return st, &fakeYouTubeKey{}
 			},
-			wantStatus:        http.StatusOK,
-			wantKey:           "",
-			wantYTCallCount:   0,
-			wantProcCallCount: 0,
+			wantStatus:      http.StatusOK,
+			wantKey:         "",
+			wantYTCallCount: 0,
 		},
 		{
 			name: "invalid videoID",
 			url:  "/api/preview-key/bad!!!id?sig=anything",
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey) {
-				return newKeyStorage(t), &fakeYouTubeKey{}, &fakeProcKey{}
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey) {
+				return newKeyStorage(t), &fakeYouTubeKey{}
 			},
-			wantStatus:        http.StatusBadRequest,
-			wantBodyContains:  "invalid videoId",
-			wantYTCallCount:   0,
-			wantProcCallCount: 0,
+			wantStatus:       http.StatusBadRequest,
+			wantBodyContains: "invalid videoId",
+			wantYTCallCount:  0,
 		},
 		{
 			name: "invalid sig",
 			url:  "/api/preview-key/" + validID + "?sig=deadbeef",
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey) {
-				return newKeyStorage(t), &fakeYouTubeKey{}, &fakeProcKey{}
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey) {
+				return newKeyStorage(t), &fakeYouTubeKey{}
 			},
-			wantStatus:        http.StatusBadRequest,
-			wantBodyContains:  "invalid sig",
-			wantYTCallCount:   0,
-			wantProcCallCount: 0,
+			wantStatus:       http.StatusBadRequest,
+			wantBodyContains: "invalid sig",
+			wantYTCallCount:  0,
 		},
 		{
 			name: "missing sig",
 			url:  "/api/preview-key/" + validID,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey) {
-				return newKeyStorage(t), &fakeYouTubeKey{}, &fakeProcKey{}
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey) {
+				return newKeyStorage(t), &fakeYouTubeKey{}
 			},
-			wantStatus:        http.StatusBadRequest,
-			wantBodyContains:  "invalid sig",
-			wantYTCallCount:   0,
-			wantProcCallCount: 0,
+			wantStatus:       http.StatusBadRequest,
+			wantBodyContains: "invalid sig",
+			wantYTCallCount:  0,
 		},
 		{
 			name: "malformed melody.json returns 500",
 			url:  "/api/preview-key/" + validID + "?sig=" + validSig,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey, *fakeProcKey) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey) {
 				st := newKeyStorage(t)
-				melodyPath := st.FilesystemPathForLocalProcessor(st.Key(validID, "melody.json"))
-				_ = os.MkdirAll(filepath.Dir(melodyPath), 0o755)
-				_ = os.WriteFile(melodyPath, []byte(`not-json{`), 0o644)
-				return st, &fakeYouTubeKey{}, &fakeProcKey{}
+				commitKeyFile(t, st, validID, "melody.json", []byte(`not-json{`))
+				return st, &fakeYouTubeKey{}
 			},
-			wantStatus:        http.StatusInternalServerError,
-			wantBodyContains:  "melody parse failed",
-			wantYTCallCount:   0,
-			wantProcCallCount: 0,
+			wantStatus:       http.StatusInternalServerError,
+			wantBodyContains: "melody parse failed",
+			wantYTCallCount:  0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			st, yt, proc := tt.setup(t)
-			router := previewKeyRouter(signer, st, yt, proc)
+			st, yt := tt.setup(t)
+			router := previewKeyRouter(signer, st, yt)
 
 			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
 			rec := httptest.NewRecorder()
@@ -221,10 +192,6 @@ func TestPreviewKeyHandler(t *testing.T) {
 
 			if got, want := yt.callCount, tt.wantYTCallCount; got != want {
 				t.Errorf("DownloadPreview call count: got %d, want %d", got, want)
-			}
-
-			if got, want := proc.callCount, tt.wantProcCallCount; got != want {
-				t.Errorf("PreviewKey call count: got %d, want %d", got, want)
 			}
 
 			if tt.wantCachedAfter && rec.Code == http.StatusOK {

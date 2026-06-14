@@ -80,8 +80,6 @@ func main() {
 		}
 	}
 
-	processor := services.NewPythonProcessorClient(cfg.PythonProcessorURL, &http.Client{Timeout: 5 * time.Minute})
-
 	cpuProc := services.NewPythonCPUProcessorClient(
 		cfg.CPUProcessorURL,
 		&http.Client{Timeout: time.Duration(cfg.CPUProcessorTimeoutSeconds) * time.Second},
@@ -94,9 +92,9 @@ func main() {
 	jobStore.StartCleanup(ctx, 5*time.Minute)
 
 	maxJobs := cfg.MaxConcurrentJobs
-	jobRunner := services.NewJobRunner(svc, storage, cpuProc, gpuProc, processor, jobStore, maxJobs)
+	jobRunner := services.NewJobRunner(svc, storage, cpuProc, gpuProc, jobStore, maxJobs)
 
-	r := api.NewRouter(origins, log, svc, signer, storage, processor, cpuProc, gpuProc, jobRunner, jobStore, blobTokener)
+	r := api.NewRouter(origins, log, svc, signer, storage, cpuProc, gpuProc, jobRunner, jobStore, blobTokener)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),

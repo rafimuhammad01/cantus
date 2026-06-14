@@ -19,7 +19,6 @@ type JobRunner struct {
 	storage   Storage
 	cpu       CPUProcessorClient
 	gpu       GPUProcessorClient
-	processor ProcessorClient
 	jobStore  *JobStore
 	semaphore chan struct{} // capacity = maxConcurrent
 	inflight  sync.Map      // key: videoID (string) → value: jobID (string)
@@ -31,7 +30,6 @@ func NewJobRunner(
 	storage Storage,
 	cpu CPUProcessorClient,
 	gpu GPUProcessorClient,
-	processor ProcessorClient,
 	jobStore *JobStore,
 	maxConcurrent int,
 ) *JobRunner {
@@ -40,7 +38,7 @@ func NewJobRunner(
 	}
 	return &JobRunner{
 		ytSvc: ytSvc, storage: storage, cpu: cpu, gpu: gpu,
-		processor: processor, jobStore: jobStore,
+		jobStore:  jobStore,
 		semaphore: make(chan struct{}, maxConcurrent),
 	}
 }
