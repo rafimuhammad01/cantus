@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -90,8 +89,8 @@ func (r *JobRunner) Submit(videoID string, semitones int) string {
 // Run executes the four-stage pipeline synchronously. It is exported so tests can
 // drive it directly without goroutines.
 func (r *JobRunner) Run(ctx context.Context, jobID, videoID string, semitones int) {
-	// localDisk is used for filesystem path resolution within this same-host pipeline.
-	// Once Task 4 introduces cloud storage, this cast will be replaced with signed URLs.
+	// localDisk is used for filesystem path resolution in Stages 3-4 until Task 8
+	// migrates Melody to URL handoff.
 	localDisk, ok := r.storage.(*LocalDiskStorage)
 	if !ok {
 		r.fail(jobID, "storage backend does not support local filesystem paths")
@@ -114,13 +113,36 @@ func (r *JobRunner) Run(ctx context.Context, jobID, videoID string, semitones in
 
 	// Stage 2: Separate vocals from instrumental.
 	r.update(jobID, models.StatusSeparating, "separating vocals from instrumental")
-	vocalsHas, _ := r.storage.Has(ctx, r.storage.Key(videoID, "vocals.wav"))
-	noVocalsHas, _ := r.storage.Has(ctx, r.storage.Key(videoID, "no_vocals.wav"))
+	vocalsKey := r.storage.Key(videoID, "vocals.wav")
+	noVocalsKey := r.storage.Key(videoID, "no_vocals.wav")
+	vocalsHas, _ := r.storage.Has(ctx, vocalsKey)
+	noVocalsHas, _ := r.storage.Has(ctx, noVocalsKey)
 	if !vocalsHas || !noVocalsHas {
-		originalPath := localDisk.FilesystemPathForLocalProcessor(r.storage.Key(videoID, "original.wav"))
-		outputDir := filepath.Dir(originalPath)
-		if _, _, err := r.processor.Separate(ctx, originalPath, outputDir); err != nil {
+		inURL, err := r.storage.SignGet(ctx, r.storage.Key(videoID, "original.wav"))
+		if err != nil {
+			r.fail(jobID, "sign get failed: "+err.Error())
+			return
+		}
+		vocalsPutURL, err := r.storage.SignPut(ctx, vocalsKey)
+		if err != nil {
+			r.fail(jobID, "sign put failed: "+err.Error())
+			return
+		}
+		noVocalsPutURL, err := r.storage.SignPut(ctx, noVocalsKey)
+		if err != nil {
+			r.fail(jobID, "sign put failed: "+err.Error())
+			return
+		}
+		if err := r.gpu.Separate(ctx, inURL, vocalsPutURL, noVocalsPutURL); err != nil {
 			r.fail(jobID, "separate failed: "+err.Error())
+			return
+		}
+		if err := r.storage.Verify(ctx, vocalsKey); err != nil {
+			r.fail(jobID, "vocals stem not materialized: "+err.Error())
+			return
+		}
+		if err := r.storage.Verify(ctx, noVocalsKey); err != nil {
+			r.fail(jobID, "no_vocals stem not materialized: "+err.Error())
 			return
 		}
 	}

@@ -23,7 +23,8 @@ func PreviewStems(
 	signer *services.Signer,
 	storage services.Storage,
 	ytSvc services.YouTubeService,
-	processor services.ProcessorClient,
+	processor services.ProcessorClient, // used by Stage 4 until Task 8
+	gpu services.GPUProcessorClient,
 	transcode services.TranscodeFunc,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +83,7 @@ func PreviewStems(
 			}
 		}
 
-		// Stage 2 — ensure preview-stems/{vocals,no_vocals}.wav.
+		// Stage 2 — ensure preview-stems/{vocals,no_vocals}.wav via GPU Separate.
 		// Both must be present; if either is missing re-run Demucs so the pair is consistent.
 		vocalsHas, err := storage.Has(ctx, storage.Key(videoID, "preview-stems/vocals.wav"))
 		if err != nil {
@@ -97,29 +98,41 @@ func PreviewStems(
 			return
 		}
 		if !vocalsHas || !noVocalsWavHas {
-			local, ok := storage.(*services.LocalDiskStorage)
-			if !ok {
-				http.Error(w, "processor unavailable in this storage mode", http.StatusInternalServerError)
+			previewKey := storage.Key(videoID, "preview.mp3")
+			vocalsKey := storage.Key(videoID, "preview-stems/vocals.wav")
+			noVocalsKey := storage.Key(videoID, "preview-stems/no_vocals.wav")
+
+			inURL, err := storage.SignGet(ctx, previewKey)
+			if err != nil {
+				log.Error().Err(err).Str("videoId", videoID).Msg("storage.SignGet (preview.mp3) failed")
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "sign get failed"})
 				return
 			}
-
-			previewPath := local.FilesystemPathForLocalProcessor(local.Key(videoID, "preview.mp3"))
-
-			// Resolve the stems output directory from the sentinel path so Demucs
-			// writes vocals.wav + no_vocals.wav directly into preview-stems/.
-			sentinelKey := local.Key(videoID, "preview-stems/vocals.wav")
-			outputDir := filepath.Dir(local.FilesystemPathForLocalProcessor(sentinelKey))
-
-			// Create the directory before Demucs runs; it doesn't create parents.
-			if err := os.MkdirAll(outputDir, 0o755); err != nil {
-				log.Error().Err(err).Str("videoId", videoID).Msg("os.MkdirAll (stems dir) failed")
-				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage path failed"})
+			vocalsPutURL, err := storage.SignPut(ctx, vocalsKey)
+			if err != nil {
+				log.Error().Err(err).Str("videoId", videoID).Msg("storage.SignPut (vocals.wav) failed")
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "sign put failed"})
 				return
 			}
-
-			if _, _, err := processor.Separate(ctx, previewPath, outputDir); err != nil {
+			noVocalsPutURL, err := storage.SignPut(ctx, noVocalsKey)
+			if err != nil {
+				log.Error().Err(err).Str("videoId", videoID).Msg("storage.SignPut (no_vocals.wav) failed")
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "sign put failed"})
+				return
+			}
+			if err := gpu.Separate(ctx, inURL, vocalsPutURL, noVocalsPutURL); err != nil {
 				log.Error().Err(err).Str("videoId", videoID).Msg("processor.Separate failed")
 				writeJSON(w, http.StatusBadGateway, errorResponse{Error: "separate failed"})
+				return
+			}
+			if err := storage.Verify(ctx, vocalsKey); err != nil {
+				log.Error().Err(err).Str("videoId", videoID).Msg("storage.Verify (vocals.wav) failed")
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "vocals stem not materialized"})
+				return
+			}
+			if err := storage.Verify(ctx, noVocalsKey); err != nil {
+				log.Error().Err(err).Str("videoId", videoID).Msg("storage.Verify (no_vocals.wav) failed")
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "no_vocals stem not materialized"})
 				return
 			}
 		}
