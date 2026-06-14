@@ -9,31 +9,57 @@ export const onRequest: PagesFunction<{ CANTUS_BACKEND_URL: string }> = async (
   context,
 ) => {
   const { request, env } = context;
-  if (!env.CANTUS_BACKEND_URL) {
-    return new Response("CANTUS_BACKEND_URL not configured", { status: 500 });
+
+  // Debug: surface configuration problems instead of silently throwing.
+  const backendURL = env.CANTUS_BACKEND_URL;
+  if (!backendURL) {
+    return new Response(
+      JSON.stringify({
+        error: "CANTUS_BACKEND_URL env var missing on Pages",
+        env_keys: Object.keys(env),
+      }),
+      { status: 500, headers: { "content-type": "application/json" } },
+    );
   }
 
-  const incoming = new URL(request.url);
-  const target = new URL(
-    incoming.pathname + incoming.search,
-    env.CANTUS_BACKEND_URL,
-  );
+  let target: URL;
+  try {
+    const incoming = new URL(request.url);
+    target = new URL(incoming.pathname + incoming.search, backendURL);
+  } catch (err) {
+    return new Response(
+      JSON.stringify({
+        error: "failed to build upstream URL",
+        backendURL,
+        detail: String(err),
+      }),
+      { status: 500, headers: { "content-type": "application/json" } },
+    );
+  }
 
-  // Forward method, headers, body. SSE streams forward as-is because Workers'
-  // fetch returns a streaming Response body that we pass straight through.
-  const upstream = await fetch(target.toString(), {
-    method: request.method,
-    headers: request.headers,
-    body:
-      request.method === "GET" || request.method === "HEAD"
-        ? undefined
-        : request.body,
-    redirect: "manual",
-  });
-
-  return new Response(upstream.body, {
-    status: upstream.status,
-    statusText: upstream.statusText,
-    headers: upstream.headers,
-  });
+  try {
+    const upstream = await fetch(target.toString(), {
+      method: request.method,
+      headers: request.headers,
+      body:
+        request.method === "GET" || request.method === "HEAD"
+          ? undefined
+          : request.body,
+      redirect: "manual",
+    });
+    return new Response(upstream.body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: upstream.headers,
+    });
+  } catch (err) {
+    return new Response(
+      JSON.stringify({
+        error: "upstream fetch failed",
+        target: target.toString(),
+        detail: String(err),
+      }),
+      { status: 502, headers: { "content-type": "application/json" } },
+    );
+  }
 };
