@@ -103,7 +103,7 @@ func PreviewShift(
 					return
 				}
 				if err := cpu.Shift(ctx, inURL, outURL, float64(n)); err != nil {
-					log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("processor.Shift failed")
+					log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("cpu.Shift failed")
 					writeJSON(w, http.StatusBadGateway, errorResponse{Error: "shift failed"})
 					return
 				}
@@ -161,7 +161,7 @@ func PreviewShift(
 				return
 			}
 			if err := cpu.Shift(ctx, inURL, outURL, float64(n)); err != nil {
-				log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("processor.Shift failed")
+				log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("cpu.Shift failed")
 				writeJSON(w, http.StatusBadGateway, errorResponse{Error: "shift failed"})
 				return
 			}

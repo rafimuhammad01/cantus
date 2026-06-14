@@ -132,7 +132,7 @@ func PreviewStems(
 				return
 			}
 			if err := gpu.Separate(ctx, inURL, vocalsPutURL, noVocalsPutURL); err != nil {
-				log.Error().Err(err).Str("videoId", videoID).Msg("processor.Separate failed")
+				log.Error().Err(err).Str("videoId", videoID).Msg("gpu.Separate failed")
 				writeJSON(w, http.StatusBadGateway, errorResponse{Error: "separate failed"})
 				return
 			}
@@ -207,7 +207,7 @@ func PreviewStems(
 				return
 			}
 			if err := gpu.Melody(ctx, vocalsURL, outURL); err != nil {
-				log.Error().Err(err).Str("videoId", videoID).Msg("processor.Melody failed")
+				log.Error().Err(err).Str("videoId", videoID).Msg("gpu.Melody failed")
 				writeJSON(w, http.StatusBadGateway, errorResponse{Error: "melody failed"})
 				return
 			}
