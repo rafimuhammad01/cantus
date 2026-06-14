@@ -6,9 +6,7 @@ services:
       - "4416"
 
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ghcr.io/rafimuhammad01/cantus-backend:latest
     restart: unless-stopped
     depends_on:
       - bgutil
