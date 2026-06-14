@@ -16,27 +16,27 @@ import (
 	"cantus/backend/services"
 )
 
-// fakeCPUProcessor is a test double for services.CPUProcessorClient.
+// fakeShifter is a test double for services.Shifter.
 // shiftFn, if non-nil, is called instead of the default behaviour. If shiftFn
-// is nil and shiftErr is nil, Shift returns nil (caller must pre-stage the
-// output in storage before the request if Verify needs to pass).
-type fakeCPUProcessor struct {
+// is nil and shiftErr is nil, Shift writes "shifted" to outPath and returns nil.
+type fakeShifter struct {
 	shiftErr  error
-	shiftFn   func(ctx context.Context, inURL, outURL string, semitones float64) error
+	shiftFn   func(ctx context.Context, inPath, outPath string, semitones float64) error
 	callCount int
 	lastSemi  float64
 }
 
-func (f *fakeCPUProcessor) Shift(ctx context.Context, inURL, outURL string, semitones float64) error {
+func (f *fakeShifter) Shift(ctx context.Context, inPath, outPath string, semitones float64) error {
 	f.callCount++
 	f.lastSemi = semitones
 	if f.shiftFn != nil {
-		return f.shiftFn(ctx, inURL, outURL, semitones)
+		return f.shiftFn(ctx, inPath, outPath, semitones)
+	}
+	if err := os.WriteFile(outPath, []byte("shifted"), 0o644); err != nil {
+		return err
 	}
 	return f.shiftErr
 }
-
-func (f *fakeCPUProcessor) PreviewKey(_ context.Context, _ string) (string, error) { return "", nil }
 
 // fakeYouTubeShift is a test double for services.YouTubeService, used in preview_shift tests.
 // DownloadPreview optionally calls onDownload to simulate writing the preview file.
@@ -68,9 +68,9 @@ func newErrStorage(t *testing.T, errOnName string) *errStorage {
 }
 
 // shiftRouter wires a chi router with the PreviewShift handler at /api/preview-shift.
-func shiftRouter(signer *services.Signer, storage services.Storage, yt services.YouTubeService, cpu services.CPUProcessorClient) *chi.Mux {
+func shiftRouter(signer *services.Signer, storage services.Storage, yt services.YouTubeService, shifter services.Shifter) *chi.Mux {
 	r := chi.NewRouter()
-	r.Post("/api/preview-shift", handlers.PreviewShift(signer, storage, yt, cpu))
+	r.Post("/api/preview-shift", handlers.PreviewShift(signer, storage, yt, shifter))
 	return r
 }
 
@@ -138,7 +138,7 @@ func TestPreviewShiftHandler(t *testing.T) {
 		body string
 
 		// setup is called before the request to configure fakes / storage.
-		setup func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor)
+		setup func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter)
 
 		wantStatus         int
 		wantBody           string
@@ -152,13 +152,11 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "happy path, cache miss, no preview yet",
 			body: shiftBody(validID, validSig, -2),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
-				outKey := st.Key(validID, "preview-shifts/-2.mp3")
-				cpu := &fakeCPUProcessor{
-					shiftFn: func(_ context.Context, _, _ string, _ float64) error {
-						commitToStorage(t, st, outKey, []byte("fake shifted bytes"))
-						return nil
+				shifter := &fakeShifter{
+					shiftFn: func(_ context.Context, _, outPath string, _ float64) error {
+						return os.WriteFile(outPath, []byte("fake shifted bytes"), 0o644)
 					},
 				}
 				yt := &fakeYouTubeShift{
@@ -166,7 +164,7 @@ func TestPreviewShiftHandler(t *testing.T) {
 						commitToStorage(t, st, st.Key(videoID, "preview.mp3"), []byte("fake preview bytes"))
 					},
 				}
-				return st, yt, cpu
+				return st, yt, shifter
 			},
 			wantStatus:         http.StatusOK,
 			wantBody:           "fake shifted bytes",
@@ -179,19 +177,17 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "happy path, preview already cached",
 			body: shiftBody(validID, validSig, 3),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
 				// Pre-write preview.mp3 into storage.
 				commitToStorage(t, st, st.Key(validID, "preview.mp3"), []byte("fake preview bytes"))
-				outKey := st.Key(validID, "preview-shifts/3.mp3")
-				cpu := &fakeCPUProcessor{
-					shiftFn: func(_ context.Context, _, _ string, _ float64) error {
-						commitToStorage(t, st, outKey, []byte("shifted +3"))
-						return nil
+				shifter := &fakeShifter{
+					shiftFn: func(_ context.Context, _, outPath string, _ float64) error {
+						return os.WriteFile(outPath, []byte("shifted +3"), 0o644)
 					},
 				}
 				yt := &fakeYouTubeShift{}
-				return st, yt, cpu
+				return st, yt, shifter
 			},
 			wantStatus:         http.StatusOK,
 			wantBody:           "shifted +3",
@@ -203,13 +199,13 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "happy path, shifted already cached",
 			body: shiftBody(validID, validSig, -2),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
 				// Pre-write the legacy shifted file into storage.
 				commitToStorage(t, st, st.Key(validID, "preview-shifts/-2.mp3"), []byte("pre-cached shifted"))
-				cpu := &fakeCPUProcessor{}
+				shifter := &fakeShifter{}
 				yt := &fakeYouTubeShift{}
-				return st, yt, cpu
+				return st, yt, shifter
 			},
 			wantStatus:         http.StatusOK,
 			wantBody:           "pre-cached shifted",
@@ -220,13 +216,11 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "semitones=0 is valid",
 			body: shiftBody(validID, validSig, 0),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
-				outKey := st.Key(validID, "preview-shifts/0.mp3")
-				cpu := &fakeCPUProcessor{
-					shiftFn: func(_ context.Context, _, _ string, _ float64) error {
-						commitToStorage(t, st, outKey, []byte("zero shift"))
-						return nil
+				shifter := &fakeShifter{
+					shiftFn: func(_ context.Context, _, outPath string, _ float64) error {
+						return os.WriteFile(outPath, []byte("zero shift"), 0o644)
 					},
 				}
 				yt := &fakeYouTubeShift{
@@ -234,7 +228,7 @@ func TestPreviewShiftHandler(t *testing.T) {
 						commitToStorage(t, st, st.Key(videoID, "preview.mp3"), []byte("fake preview"))
 					},
 				}
-				return st, yt, cpu
+				return st, yt, shifter
 			},
 			wantStatus:         http.StatusOK,
 			wantBody:           "zero shift",
@@ -246,9 +240,9 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "invalid videoID",
 			body: `{"video_id":"bad/slash!!","sig":"anything","semitones":-2}`,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
-				return st, &fakeYouTubeShift{}, &fakeCPUProcessor{}
+				return st, &fakeYouTubeShift{}, &fakeShifter{}
 			},
 			wantStatus:         http.StatusBadRequest,
 			wantBodyContains:   "invalid videoId",
@@ -258,9 +252,9 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "bad sig",
 			body: `{"video_id":"` + validID + `","sig":"deadbeef","semitones":-2}`,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
-				return st, &fakeYouTubeShift{}, &fakeCPUProcessor{}
+				return st, &fakeYouTubeShift{}, &fakeShifter{}
 			},
 			wantStatus:         http.StatusBadRequest,
 			wantBodyContains:   "invalid sig",
@@ -270,9 +264,9 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "missing sig field",
 			body: `{"video_id":"` + validID + `","semitones":-2}`,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
-				return st, &fakeYouTubeShift{}, &fakeCPUProcessor{}
+				return st, &fakeYouTubeShift{}, &fakeShifter{}
 			},
 			wantStatus:         http.StatusBadRequest,
 			wantBodyContains:   "invalid sig",
@@ -282,9 +276,9 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "semitones=-13 out of range",
 			body: shiftBody(validID, validSig, -13),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
-				return st, &fakeYouTubeShift{}, &fakeCPUProcessor{}
+				return st, &fakeYouTubeShift{}, &fakeShifter{}
 			},
 			wantStatus:         http.StatusBadRequest,
 			wantBodyContains:   "semitones must be in [-12, 12]",
@@ -294,9 +288,9 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "semitones=13 out of range",
 			body: shiftBody(validID, validSig, 13),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
-				return st, &fakeYouTubeShift{}, &fakeCPUProcessor{}
+				return st, &fakeYouTubeShift{}, &fakeShifter{}
 			},
 			wantStatus:         http.StatusBadRequest,
 			wantBodyContains:   "semitones must be in [-12, 12]",
@@ -306,9 +300,9 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "malformed JSON body",
 			body: "not json",
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
-				return st, &fakeYouTubeShift{}, &fakeCPUProcessor{}
+				return st, &fakeYouTubeShift{}, &fakeShifter{}
 			},
 			wantStatus:         http.StatusBadRequest,
 			wantBodyContains:   "invalid request body",
@@ -318,10 +312,10 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "DownloadPreview returns error",
 			body: shiftBody(validID, validSig, -2),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
 				yt := &fakeYouTubeShift{err: errors.New("yt-dlp died")}
-				return st, yt, &fakeCPUProcessor{}
+				return st, yt, &fakeShifter{}
 			},
 			wantStatus:         http.StatusBadGateway,
 			wantBodyContains:   "download failed",
@@ -331,12 +325,12 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "Shift returns error",
 			body: shiftBody(validID, validSig, -2),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
 				// Pre-write preview so DownloadPreview is skipped.
 				commitToStorage(t, st, st.Key(validID, "preview.mp3"), []byte("preview"))
-				cpu := &fakeCPUProcessor{shiftErr: errors.New("ffmpeg died")}
-				return st, &fakeYouTubeShift{}, cpu
+				shifter := &fakeShifter{shiftErr: errors.New("ffmpeg died")}
+				return st, &fakeYouTubeShift{}, shifter
 			},
 			wantStatus:         http.StatusBadGateway,
 			wantBodyContains:   "shift failed",
@@ -350,11 +344,11 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "stem cache hit — serve stem-shifted without compute",
 			body: shiftBody(validID, validSig, -3),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
 				// Pre-write the stem-shifted file.
 				commitToStorage(t, st, st.Key(validID, "preview-stems/shifted/-3.mp3"), []byte("stem shifted cached"))
-				return st, &fakeYouTubeShift{}, &fakeCPUProcessor{}
+				return st, &fakeYouTubeShift{}, &fakeShifter{}
 			},
 			wantStatus:         http.StatusOK,
 			wantBody:           "stem shifted cached",
@@ -365,11 +359,11 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "legacy cache hit, stem-shifted absent — serve legacy",
 			body: shiftBody(validID, validSig, 5),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
 				// Pre-write legacy shifted, no stem-shifted file.
 				commitToStorage(t, st, st.Key(validID, "preview-shifts/5.mp3"), []byte("legacy shifted cached"))
-				return st, &fakeYouTubeShift{}, &fakeCPUProcessor{}
+				return st, &fakeYouTubeShift{}, &fakeShifter{}
 			},
 			wantStatus:         http.StatusOK,
 			wantBody:           "legacy shifted cached",
@@ -385,19 +379,17 @@ func TestPreviewShiftHandler(t *testing.T) {
 			// would put vocals back into the audio (the chipmunk bug).
 			name: "stem WAV present + legacy cache present — must compute on stem, ignore legacy",
 			body: shiftBody(validID, validSig, -5),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
 				// Pre-write BOTH: stem WAV (new) and legacy shifted (stale chipmunk).
 				commitToStorage(t, st, st.Key(validID, "preview-stems/no_vocals.wav"), []byte("stem wav bytes"))
 				commitToStorage(t, st, st.Key(validID, "preview-shifts/-5.mp3"), []byte("STALE LEGACY CHIPMUNK"))
-				outKey := st.Key(validID, "preview-stems/shifted/-5.mp3")
-				cpu := &fakeCPUProcessor{
-					shiftFn: func(_ context.Context, _, _ string, _ float64) error {
-						commitToStorage(t, st, outKey, []byte("fresh clean stem shift"))
-						return nil
+				shifter := &fakeShifter{
+					shiftFn: func(_ context.Context, _, outPath string, _ float64) error {
+						return os.WriteFile(outPath, []byte("fresh clean stem shift"), 0o644)
 					},
 				}
-				return st, &fakeYouTubeShift{}, cpu
+				return st, &fakeYouTubeShift{}, shifter
 			},
 			wantStatus:         http.StatusOK,
 			wantBody:           "fresh clean stem shift",
@@ -410,18 +402,16 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "both shifted caches absent, stem WAV present — shifts stem",
 			body: shiftBody(validID, validSig, 4),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
 				// Pre-write the stem WAV only.
 				commitToStorage(t, st, st.Key(validID, "preview-stems/no_vocals.wav"), []byte("stem wav bytes"))
-				outKey := st.Key(validID, "preview-stems/shifted/4.mp3")
-				cpu := &fakeCPUProcessor{
-					shiftFn: func(_ context.Context, _, _ string, _ float64) error {
-						commitToStorage(t, st, outKey, []byte("stem shifted output"))
-						return nil
+				shifter := &fakeShifter{
+					shiftFn: func(_ context.Context, _, outPath string, _ float64) error {
+						return os.WriteFile(outPath, []byte("stem shifted output"), 0o644)
 					},
 				}
-				return st, &fakeYouTubeShift{}, cpu
+				return st, &fakeYouTubeShift{}, shifter
 			},
 			wantStatus:         http.StatusOK,
 			wantBody:           "stem shifted output",
@@ -434,13 +424,11 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "both shifted caches absent, stem WAV also absent — legacy full-mix fallback",
 			body: shiftBody(validID, validSig, -5),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newRealStorage(t)
-				outKey := st.Key(validID, "preview-shifts/-5.mp3")
-				cpu := &fakeCPUProcessor{
-					shiftFn: func(_ context.Context, _, _ string, _ float64) error {
-						commitToStorage(t, st, outKey, []byte("legacy fallback output"))
-						return nil
+				shifter := &fakeShifter{
+					shiftFn: func(_ context.Context, _, outPath string, _ float64) error {
+						return os.WriteFile(outPath, []byte("legacy fallback output"), 0o644)
 					},
 				}
 				yt := &fakeYouTubeShift{
@@ -448,7 +436,7 @@ func TestPreviewShiftHandler(t *testing.T) {
 						commitToStorage(t, st, st.Key(videoID, "preview.mp3"), []byte("preview bytes"))
 					},
 				}
-				return st, yt, cpu
+				return st, yt, shifter
 			},
 			wantStatus:         http.StatusOK,
 			wantBody:           "legacy fallback output",
@@ -461,9 +449,9 @@ func TestPreviewShiftHandler(t *testing.T) {
 		{
 			name: "stem-shifted cache lookup error — 500",
 			body: shiftBody(validID, validSig, 2),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeCPUProcessor) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeShift, *fakeShifter) {
 				st := newErrStorage(t, "preview-stems/shifted/2.mp3")
-				return st, &fakeYouTubeShift{}, &fakeCPUProcessor{}
+				return st, &fakeYouTubeShift{}, &fakeShifter{}
 			},
 			wantStatus:         http.StatusInternalServerError,
 			wantBodyContains:   "storage check failed",
@@ -474,8 +462,8 @@ func TestPreviewShiftHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			st, yt, cpu := tt.setup(t)
-			router := shiftRouter(signer, st, yt, cpu)
+			st, yt, shifter := tt.setup(t)
+			router := shiftRouter(signer, st, yt, shifter)
 
 			req := httptest.NewRequest(http.MethodPost, "/api/preview-shift", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
@@ -504,12 +492,12 @@ func TestPreviewShiftHandler(t *testing.T) {
 				t.Errorf("DownloadPreview call count: got %d, want %d", got, want)
 			}
 
-			if got, want := cpu.callCount, tt.wantShiftCalled; got != want {
+			if got, want := shifter.callCount, tt.wantShiftCalled; got != want {
 				t.Errorf("Shift call count: got %d, want %d", got, want)
 			}
 
 			if tt.wantShiftCalled > 0 {
-				if got, want := cpu.lastSemi, tt.wantShiftSemitones; got != want {
+				if got, want := shifter.lastSemi, tt.wantShiftSemitones; got != want {
 					t.Errorf("Shift semitones: got %v, want %v", got, want)
 				}
 			}
@@ -553,7 +541,7 @@ func TestPreviewShiftHandler_RangeRequest(t *testing.T) {
 			// Pre-cache the shifted file.
 			commitToStorage(t, st, st.Key(validID, "preview-shifts/-2.mp3"), []byte("hello world full"))
 
-			router := shiftRouter(signer, st, &fakeYouTubeShift{}, &fakeCPUProcessor{})
+			router := shiftRouter(signer, st, &fakeYouTubeShift{}, &fakeShifter{})
 
 			req := httptest.NewRequest(http.MethodPost, "/api/preview-shift", strings.NewReader(shiftBody(validID, validSig, -2)))
 			req.Header.Set("Content-Type", "application/json")

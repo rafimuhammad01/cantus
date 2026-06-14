@@ -75,10 +75,6 @@ func main() {
 		}
 	}
 
-	cpuProc := services.NewPythonCPUProcessorClient(
-		cfg.CPUProcessorURL,
-		&http.Client{Timeout: time.Duration(cfg.CPUProcessorTimeoutSeconds) * time.Second},
-	)
 	gpuProc := services.NewPythonGPUProcessorClient(
 		cfg.GPUProcessorURL,
 		&http.Client{Timeout: time.Duration(cfg.GPUProcessorTimeoutSeconds) * time.Second},
@@ -91,7 +87,7 @@ func main() {
 	maxJobs := cfg.MaxConcurrentJobs
 	jobRunner := services.NewJobRunner(svc, storage, gpuProc, shifter, jobStore, maxJobs)
 
-	r := api.NewRouter(origins, log, svc, signer, storage, cpuProc, gpuProc, jobRunner, jobStore, blobTokener)
+	r := api.NewRouter(origins, log, svc, signer, storage, gpuProc, shifter, jobRunner, jobStore, blobTokener)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
