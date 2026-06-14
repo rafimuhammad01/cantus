@@ -1,0 +1,21 @@
+services:
+  bgutil:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    restart: unless-stopped
+    expose:
+      - "4416"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - bgutil
+    env_file:
+      - ./backend/.env
+    environment:
+      # Override: in-cluster DNS for the PoT sidecar.
+      YT_DLP_POT_BASE_URL: http://bgutil:4416
+    ports:
+      - "8080:8080"
