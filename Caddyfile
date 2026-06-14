@@ -1,0 +1,7 @@
+# sslip.io maps 54-169-205-65.sslip.io → 54.169.205.65 via public DNS.
+# Caddy auto-provisions a Let's Encrypt cert via HTTP-01 challenge on :80,
+# then serves HTTPS on :443 and reverse-proxies to the backend container.
+
+54-169-205-65.sslip.io {
+  reverse_proxy backend:8080
+}
