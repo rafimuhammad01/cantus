@@ -30,5 +30,6 @@ require (
 	github.com/aws/smithy-go v1.27.1 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/raitonoberu/ytmusic v0.0.0-20240324143733-0e5780514b1d // indirect
 	golang.org/x/sys v0.29.0 // indirect
 )
