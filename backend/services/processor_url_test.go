@@ -3,7 +3,6 @@ package services_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -160,7 +159,3 @@ func TestPythonProcessorClient_Melody(t *testing.T) {
 		})
 	}
 }
-
-// Ensure errors package is used (context.Canceled check removed with CPU tests;
-// keep import to avoid "imported and not used" if future tests need it).
-var _ = errors.New
