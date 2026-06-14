@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from routers._io_url import download_to_temp, upload_from_path
-from services.demucs_service import DemucsService
+from services.roformer_service import RoformerService
 
 
 class SeparateRequest(BaseModel):
@@ -21,17 +21,23 @@ class SeparateRequest(BaseModel):
 
 
 @lru_cache(maxsize=1)
-def get_demucs_service() -> DemucsService:
-    return DemucsService(device=os.environ.get("DEVICE", "cpu"))
+def get_roformer_service() -> RoformerService:
+    return RoformerService(
+        model_dir=os.environ.get("MODEL_DIR", "./tmp/models"),
+        model_filename=os.environ.get(
+            "ROFORMER_MODEL_FILENAME",
+            "model_bs_roformer_ep_368_sdr_12.9628.ckpt",
+        ),
+    )
 
 
-SeparateServiceDep = Annotated[DemucsService, Depends(get_demucs_service)]
+SeparateServiceDep = Annotated[RoformerService, Depends(get_roformer_service)]
 router = APIRouter()
 
 
 @router.post("/separate", status_code=204)
 def separate(req: SeparateRequest, service: SeparateServiceDep) -> Response:
-    """Download input → run Demucs → upload both stems."""
+    """Download input → run Roformer → upload both stems."""
 
     async def _run() -> None:
         with tempfile.TemporaryDirectory(prefix="separate-") as td:
@@ -46,7 +52,7 @@ def separate(req: SeparateRequest, service: SeparateServiceDep) -> Response:
             vocals = stems_dir / "vocals.wav"
             no_vocals = stems_dir / "no_vocals.wav"
             if not vocals.exists() or not no_vocals.exists():
-                raise HTTPException(status_code=500, detail="demucs did not produce both stems")
+                raise HTTPException(status_code=500, detail="roformer did not produce both stems")
             await upload_from_path(vocals, req.vocals_output_url)
             await upload_from_path(no_vocals, req.no_vocals_output_url)
 

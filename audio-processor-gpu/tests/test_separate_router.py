@@ -7,10 +7,10 @@ from fastapi.testclient import TestClient
 
 from main import app
 from routers import separate as sep_router
-from routers.separate import get_demucs_service
+from routers.separate import get_roformer_service
 
 
-class _StubDemucs:
+class _StubRoformer:
     def __init__(self, raise_exc: Exception | None = None) -> None:
         self.calls: list[tuple[str, str]] = []
         self._raise = raise_exc
@@ -19,7 +19,7 @@ class _StubDemucs:
         self.calls.append((input_path, output_dir))
         if self._raise is not None:
             raise self._raise
-        # Simulate Demucs writing both stems into output_dir.
+        # Simulate Roformer writing both stems into output_dir.
         Path(output_dir, "vocals.wav").write_bytes(b"VOCALS")
         Path(output_dir, "no_vocals.wav").write_bytes(b"NO-VOCALS")
 
@@ -48,8 +48,8 @@ def stub_io(monkeypatch):
 
 
 def test_separate_happy_path(stub_io):
-    stub = _StubDemucs()
-    app.dependency_overrides[get_demucs_service] = lambda: stub
+    stub = _StubRoformer()
+    app.dependency_overrides[get_roformer_service] = lambda: stub
     stub_io["vocals_url"] = "https://r2.test/v.wav"
     stub_io["no_vocals_url"] = "https://r2.test/nv.wav"
     try:
@@ -88,8 +88,8 @@ def test_separate_missing_required_fields_returns_422(body, stub_io):
 
 
 def test_separate_runtime_error_returns_500(stub_io):
-    stub = _StubDemucs(raise_exc=RuntimeError("demucs OOM"))
-    app.dependency_overrides[get_demucs_service] = lambda: stub
+    stub = _StubRoformer(raise_exc=RuntimeError("roformer OOM"))
+    app.dependency_overrides[get_roformer_service] = lambda: stub
     try:
         client = TestClient(app)
         resp = client.post(
@@ -101,6 +101,6 @@ def test_separate_runtime_error_returns_500(stub_io):
             },
         )
         assert resp.status_code == 500
-        assert "demucs" in resp.json()["detail"]
+        assert "roformer" in resp.json()["detail"].lower()
     finally:
         app.dependency_overrides.clear()
