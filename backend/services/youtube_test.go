@@ -40,6 +40,11 @@ func TestPythonYouTubeService_SearchDelegates(t *testing.T) {
 			if len(got.Items) != len(tt.wantIDs) {
 				t.Fatalf("len: got %d, want %d", len(got.Items), len(tt.wantIDs))
 			}
+			for i, want := range tt.wantIDs {
+				if got.Items[i].VideoID != want {
+					t.Errorf("Items[%d].VideoID: got %q, want %q", i, got.Items[i].VideoID, want)
+				}
+			}
 		})
 	}
 }
