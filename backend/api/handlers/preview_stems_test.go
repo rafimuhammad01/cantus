@@ -43,12 +43,16 @@ func (f *fakeStemsProcessor) Melody(_ context.Context, _, outputPath string) err
 }
 
 // fakeGPUStemsProcessor is a test double for services.GPUProcessorClient used in
-// preview_stems tests for Stage 2 (Separate via URL handoff).
+// preview_stems tests for Stage 2 (Separate) and Stage 4 (Melody via URL handoff).
 type fakeGPUStemsProcessor struct {
 	separateErr   error
 	separateCount int
+	melodyErr     error
+	melodyCount   int
 	// onSeparate is called after the fake records the call; use it to commit stems into storage.
 	onSeparate func()
+	// onMelody is called after the fake records the call; use it to commit melody.json into storage.
+	onMelody func()
 }
 
 func (f *fakeGPUStemsProcessor) Separate(_ context.Context, _, _, _ string) error {
@@ -59,7 +63,13 @@ func (f *fakeGPUStemsProcessor) Separate(_ context.Context, _, _, _ string) erro
 	return f.separateErr
 }
 
-func (f *fakeGPUStemsProcessor) Melody(_ context.Context, _, _ string) error { return nil }
+func (f *fakeGPUStemsProcessor) Melody(_ context.Context, _, _ string) error {
+	f.melodyCount++
+	if f.onMelody != nil {
+		f.onMelody()
+	}
+	return f.melodyErr
+}
 
 // fakeYouTubeStems is a test double for services.YouTubeService in preview_stems tests.
 type fakeYouTubeStems struct {
@@ -190,6 +200,19 @@ func preStageMelody(t *testing.T, st *services.LocalDiskStorage, videoID string)
 	_ = os.WriteFile(p, []byte(`{"notes":[]}`), 0o644)
 }
 
+// commitMelodyToStorage writes melody.json directly into storage via Commit
+// so that storage.Verify passes after the fake GPU Melody call.
+func commitMelodyToStorage(t *testing.T, st *services.LocalDiskStorage, videoID string) {
+	t.Helper()
+	src := filepath.Join(t.TempDir(), "melody.json")
+	if err := os.WriteFile(src, []byte(`{"notes":[]}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := st.Commit(context.Background(), st.Key(videoID, "preview-stems/melody.json"), src); err != nil {
+		t.Fatalf("Commit(melody.json): %v", err)
+	}
+}
+
 // commitStemsToStorage writes vocals.wav + no_vocals.wav directly into storage via Commit
 // so that storage.Verify passes after the fake GPU Separate call.
 func commitStemsToStorage(t *testing.T, st *services.LocalDiskStorage, videoID string) {
@@ -242,13 +265,11 @@ func TestPreviewStemsHandler(t *testing.T) {
 					onSeparate: func() {
 						commitStemsToStorage(t, st, validID)
 					},
-				}
-				proc := &fakeStemsProcessor{
-					onMelody: func(outputPath string) {
-						_ = os.MkdirAll(filepath.Dir(outputPath), 0o755)
-						_ = os.WriteFile(outputPath, []byte(`{"notes":[]}`), 0o644)
+					onMelody: func() {
+						commitMelodyToStorage(t, st, validID)
 					},
 				}
+				proc := &fakeStemsProcessor{}
 				transcode, count := makeFakeTranscode([]byte("fake mp3"), nil)
 				return st, yt, proc, gpu, transcode, count
 			},
@@ -288,14 +309,13 @@ func TestPreviewStemsHandler(t *testing.T) {
 				preStageStems(t, st, validID)
 				preStageMp3(t, st, validID)
 				// melody.json intentionally absent
-				proc := &fakeStemsProcessor{
-					onMelody: func(outputPath string) {
-						_ = os.MkdirAll(filepath.Dir(outputPath), 0o755)
-						_ = os.WriteFile(outputPath, []byte(`{"notes":[]}`), 0o644)
+				gpu := &fakeGPUStemsProcessor{
+					onMelody: func() {
+						commitMelodyToStorage(t, st, validID)
 					},
 				}
 				transcode, count := makeFakeTranscode(nil, nil)
-				return st, &fakeYouTubeStems{}, proc, &fakeGPUStemsProcessor{}, transcode, count
+				return st, &fakeYouTubeStems{}, &fakeStemsProcessor{}, gpu, transcode, count
 			},
 			wantStatus:    http.StatusOK,
 			wantReady:     true,
@@ -316,15 +336,12 @@ func TestPreviewStemsHandler(t *testing.T) {
 					onSeparate: func() {
 						commitStemsToStorage(t, st, validID)
 					},
-				}
-				proc := &fakeStemsProcessor{
-					onMelody: func(outputPath string) {
-						_ = os.MkdirAll(filepath.Dir(outputPath), 0o755)
-						_ = os.WriteFile(outputPath, []byte(`{"notes":[]}`), 0o644)
+					onMelody: func() {
+						commitMelodyToStorage(t, st, validID)
 					},
 				}
 				transcode, count := makeFakeTranscode([]byte("fake mp3"), nil)
-				return st, &fakeYouTubeStems{}, proc, gpu, transcode, count
+				return st, &fakeYouTubeStems{}, &fakeStemsProcessor{}, gpu, transcode, count
 			},
 			wantStatus:    http.StatusOK,
 			wantReady:     true,
@@ -412,9 +429,9 @@ func TestPreviewStemsHandler(t *testing.T) {
 				preStagePreview(t, st, validID)
 				preStageStems(t, st, validID)
 				preStageMp3(t, st, validID)
-				proc := &fakeStemsProcessor{melodyErr: errors.New("crepe exploded")}
+				gpu := &fakeGPUStemsProcessor{melodyErr: errors.New("crepe exploded")}
 				transcode, count := makeFakeTranscode(nil, nil)
-				return st, &fakeYouTubeStems{}, proc, &fakeGPUStemsProcessor{}, transcode, count
+				return st, &fakeYouTubeStems{}, &fakeStemsProcessor{}, gpu, transcode, count
 			},
 			wantStatus:       http.StatusBadGateway,
 			wantBodyContains: "melody failed",
@@ -476,7 +493,7 @@ func TestPreviewStemsHandler(t *testing.T) {
 				t.Errorf("Transcode call count: got %d, want %d", got, want)
 			}
 
-			if got, want := proc.melodyCount, tt.wantMelody; got != want {
+			if got, want := gpu.melodyCount, tt.wantMelody; got != want {
 				t.Errorf("Melody call count: got %d, want %d", got, want)
 			}
 

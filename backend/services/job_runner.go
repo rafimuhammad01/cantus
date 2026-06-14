@@ -89,14 +89,6 @@ func (r *JobRunner) Submit(videoID string, semitones int) string {
 // Run executes the four-stage pipeline synchronously. It is exported so tests can
 // drive it directly without goroutines.
 func (r *JobRunner) Run(ctx context.Context, jobID, videoID string, semitones int) {
-	// localDisk is used for filesystem path resolution in Stages 3-4 until Task 8
-	// migrates Melody to URL handoff.
-	localDisk, ok := r.storage.(*LocalDiskStorage)
-	if !ok {
-		r.fail(jobID, "storage backend does not support local filesystem paths")
-		return
-	}
-
 	// Stage 1: Download full audio.
 	r.update(jobID, models.StatusDownloading, "downloading full song")
 	has, err := r.storage.Has(ctx, r.storage.Key(videoID, "original.wav"))
@@ -149,12 +141,25 @@ func (r *JobRunner) Run(ctx context.Context, jobID, videoID string, semitones in
 
 	// Stage 3: Extract melody from vocals stem.
 	r.update(jobID, models.StatusMelody, "extracting melody")
-	melodyHas, _ := r.storage.Has(ctx, r.storage.Key(videoID, "melody.json"))
+	melodyKey := r.storage.Key(videoID, "melody.json")
+	melodyHas, _ := r.storage.Has(ctx, melodyKey)
 	if !melodyHas {
-		vocalsPath := localDisk.FilesystemPathForLocalProcessor(r.storage.Key(videoID, "vocals.wav"))
-		melodyPath := localDisk.FilesystemPathForLocalProcessor(r.storage.Key(videoID, "melody.json"))
-		if err := r.processor.Melody(ctx, vocalsPath, melodyPath); err != nil {
+		vocalsURL, err := r.storage.SignGet(ctx, r.storage.Key(videoID, "vocals.wav"))
+		if err != nil {
+			r.fail(jobID, "sign get failed: "+err.Error())
+			return
+		}
+		outURL, err := r.storage.SignPut(ctx, melodyKey)
+		if err != nil {
+			r.fail(jobID, "sign put failed: "+err.Error())
+			return
+		}
+		if err := r.gpu.Melody(ctx, vocalsURL, outURL); err != nil {
 			r.fail(jobID, "melody failed: "+err.Error())
+			return
+		}
+		if err := r.storage.Verify(ctx, melodyKey); err != nil {
+			r.fail(jobID, "melody not materialized: "+err.Error())
 			return
 		}
 	}

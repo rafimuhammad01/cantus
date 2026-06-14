@@ -172,17 +172,28 @@ func PreviewStems(
 
 		// Stage 4 — ensure preview-stems/melody.json.
 		if !melodyHas {
-			local, ok := storage.(*services.LocalDiskStorage)
-			if !ok {
-				http.Error(w, "processor unavailable in this storage mode", http.StatusInternalServerError)
+			vocalsKey := storage.Key(videoID, "preview-stems/vocals.wav")
+			melodyKey := storage.Key(videoID, "preview-stems/melody.json")
+			vocalsURL, err := storage.SignGet(ctx, vocalsKey)
+			if err != nil {
+				log.Error().Err(err).Msg("storage.SignGet (vocals.wav) failed")
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "sign get failed"})
 				return
 			}
-
-			vocalsPath := local.FilesystemPathForLocalProcessor(local.Key(videoID, "preview-stems/vocals.wav"))
-			melodyPath := local.FilesystemPathForLocalProcessor(local.Key(videoID, "preview-stems/melody.json"))
-			if err := processor.Melody(ctx, vocalsPath, melodyPath); err != nil {
+			outURL, err := storage.SignPut(ctx, melodyKey)
+			if err != nil {
+				log.Error().Err(err).Msg("storage.SignPut (melody.json) failed")
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "sign put failed"})
+				return
+			}
+			if err := gpu.Melody(ctx, vocalsURL, outURL); err != nil {
 				log.Error().Err(err).Str("videoId", videoID).Msg("processor.Melody failed")
 				writeJSON(w, http.StatusBadGateway, errorResponse{Error: "melody failed"})
+				return
+			}
+			if err := storage.Verify(ctx, melodyKey); err != nil {
+				log.Error().Err(err).Str("videoId", videoID).Msg("storage.Verify (melody.json) failed")
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "melody not materialized"})
 				return
 			}
 		}
