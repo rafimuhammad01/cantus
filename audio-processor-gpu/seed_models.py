@@ -1,6 +1,9 @@
 """One-shot Modal command that pre-populates the cantus-models Volume with the
 BS-Roformer checkpoint via `audio-separator`.
 
+CREPE weights are bundled inside the `crepe` pip package itself (no runtime
+download), so they live in the app image — no volume seeding needed for CREPE.
+
 Why audio-separator does the download (not raw urllib): audio-separator owns the
 model registry — it knows which exact .ckpt + companion config YAML to fetch
 for a given model name, and where to put them in `model_file_dir`. Hand-rolling
@@ -16,7 +19,7 @@ from __future__ import annotations
 
 import modal
 
-MODEL_NAME = "model_bs_roformer_ep_368_sdr_12.9628.ckpt"
+MODEL_NAME = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
 MODEL_DIR = "/models"
 
 volume = modal.Volume.from_name("cantus-models", create_if_missing=True)

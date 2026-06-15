@@ -275,7 +275,7 @@ def test_extract_creates_output_directory(tmp_path: Path) -> None:
 
 
 def test_extract_passes_correct_crepe_args(tmp_path: Path) -> None:
-    """predictor must be called with model_capacity='tiny', step_size=50, viterbi=True."""
+    """predictor must be called with model_capacity='large', step_size=50, viterbi=True."""
     vocals = tmp_path / "vocals.wav"
     vocals.write_bytes(b"fake")
     output = tmp_path / "melody.json"
@@ -295,7 +295,7 @@ def test_extract_passes_correct_crepe_args(tmp_path: Path) -> None:
 
     assert recorded_kwargs, "predictor must have been called"
     kw = recorded_kwargs[0]
-    assert kw.get("model_capacity") == "tiny"
+    assert kw.get("model_capacity") == "large"
     assert kw.get("step_size") == STEP_SIZE_MS
     assert kw.get("viterbi") is True
 

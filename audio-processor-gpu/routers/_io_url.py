@@ -37,7 +37,15 @@ async def download_to_temp(url: str, scratch: Path) -> Path:
 
 
 async def upload_from_path(path: Path, url: str) -> None:
-    """Stream-PUT `path` to `url`. Raises HTTPException(502) on failure."""
+    """Stream-PUT `path` to `url`. Raises HTTPException(502) on failure.
+
+    Cloudflare R2 rejects chunked-transfer PUTs with 411 Length Required, so we
+    pre-compute Content-Length from the file stat and pass it explicitly. httpx
+    skips chunked encoding when Content-Length is set on the request.
+    """
+
+    size = path.stat().st_size
+    headers = {"Content-Length": str(size)}
 
     async def _iter_file():
         with path.open("rb") as f:
@@ -49,7 +57,7 @@ async def upload_from_path(path: Path, url: str) -> None:
 
     try:
         async with _client() as client:
-            resp = await client.put(url, content=_iter_file())
+            resp = await client.put(url, content=_iter_file(), headers=headers)
             if resp.status_code >= 400:
                 raise HTTPException(
                     status_code=502,

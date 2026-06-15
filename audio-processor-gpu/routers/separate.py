@@ -26,7 +26,7 @@ def get_roformer_service() -> RoformerService:
         model_dir=os.environ.get("MODEL_DIR", "./tmp/models"),
         model_filename=os.environ.get(
             "ROFORMER_MODEL_FILENAME",
-            "model_bs_roformer_ep_368_sdr_12.9628.ckpt",
+            "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
         ),
     )
 

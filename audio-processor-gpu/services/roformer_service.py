@@ -60,6 +60,9 @@ class RoformerService:
         instr_src = _pick(written, "Instrumental")
         if vocals_src is None or instr_src is None:
             raise RuntimeError(f"roformer did not produce both stems; got {written!r}")
+        # audio-separator 0.30.x returns basenames; resolve against output_dir.
+        vocals_src = os.path.join(output_dir, os.path.basename(vocals_src))
+        instr_src = os.path.join(output_dir, os.path.basename(instr_src))
         os.replace(vocals_src, vocals_target)
         os.replace(instr_src, no_vocals_target)
 
