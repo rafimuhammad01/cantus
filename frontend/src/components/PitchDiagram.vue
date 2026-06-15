@@ -4,6 +4,7 @@ import {
   usePitchDetectionSPICE,
   preloadSPICE,
   isModelReady,
+  loadStep,
 } from "@/composables/usePitchDetectionSPICE";
 import { usePitchStore } from "@/stores/pitch";
 import { hzToMidi, midiToNoteName } from "@/utils/pitch";
@@ -489,7 +490,7 @@ onBeforeUnmount(() => {
         v-else
         class="px-5 py-2 rounded-full text-sm font-medium text-[var(--color-text-muted)] bg-[var(--color-surface-2)] cursor-default"
       >
-        Loading pitch detector...
+        Loading pitch detector... [{{ loadStep }}]
       </span>
       <span
         v-if="pitchStore.hitRate !== null"

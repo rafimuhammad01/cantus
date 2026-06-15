@@ -8,6 +8,11 @@ const _isModelReady = ref(false);
 /** Reactive ref: true once the SPICE model has finished loading. */
 export const isModelReady = _isModelReady;
 
+// Diagnostic: which phase of the load are we in? Surfaced to UI so we can
+// tell where iOS Safari hangs without remote-inspecting.
+const _loadStep = ref<string>("idle");
+export const loadStep = _loadStep;
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 // SPICE output calibration from:
@@ -72,18 +77,61 @@ function getModel(): Promise<tf.GraphModel> {
   if (!modelPromise) {
     modelPromise = (async () => {
       try {
-        const m = await tf.loadGraphModel(SPICE_URL);
+        _loadStep.value = "tf-ready";
+        console.log("[spice] step: tf.ready()");
+        await withTimeout(tf.ready(), 10000, "tf.ready timeout");
+        const backend = tf.getBackend();
+        _loadStep.value = `backend:${backend}`;
+        console.log("[spice] backend:", backend);
+
+        _loadStep.value = "fetch-json";
+        console.log("[spice] step: fetch model.json");
+        const probe = await withTimeout(
+          fetch(SPICE_URL, { method: "GET" }),
+          10000,
+          "model.json fetch timeout",
+        );
+        if (!probe.ok) {
+          throw new Error(`model.json HTTP ${probe.status}`);
+        }
+
+        _loadStep.value = "load-graph";
+        console.log("[spice] step: tf.loadGraphModel");
+        const m = await withTimeout(
+          tf.loadGraphModel(SPICE_URL),
+          30000,
+          "loadGraphModel timeout",
+        );
+        _loadStep.value = "ready";
         _isModelReady.value = true;
         return m;
       } catch (e) {
-        console.warn(`[spice] load failed for ${SPICE_URL}:`, e);
+        const msg = (e as Error)?.message ?? String(e);
+        console.warn(`[spice] load failed at step=${_loadStep.value}:`, e);
+        _loadStep.value = `error:${msg}`;
         // Reset so the next mount can retry after a network blip.
         modelPromise = null;
-        throw new Error(`SPICE load failed: ${(e as Error)?.message ?? e}`);
+        throw new Error(`SPICE load failed (${_loadStep.value}): ${msg}`);
       }
     })();
   }
   return modelPromise;
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const id = setTimeout(() => reject(new Error(label)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(id);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(id);
+        reject(e);
+      },
+    );
+  });
 }
 
 /** Kick off SPICE model download without starting capture. Safe to call
