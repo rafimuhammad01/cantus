@@ -19,7 +19,7 @@ const PT_SLOPE = 63.07;
 // clean offline audio; 0.75 let noise frames sneak through and produce sustained
 // high-pitch spikes that the median couldn't kill. 0.85 trades a small drop in
 // recall for substantially fewer noise pitches in real-room conditions.
-const CONF_THRESHOLD = 0.85;
+const CONF_THRESHOLD = 0.78;
 
 // C2–C6: practical bass-profundo through soprano modal-voice. The old upper
 // bound of 1500 Hz (≈F#6) covered whistle-register / extreme belt — almost
@@ -41,7 +41,7 @@ const SMOOTH_WINDOW = 5;
 // floor passed quiet room tone through, which SPICE then tried to fit a pitch
 // to — producing the high-pitch jumps the user reported. Singing above the
 // noise floor will easily clear -38 dBFS.
-const SILENCE_RMS = 0.012;
+const SILENCE_RMS = 0.007;
 
 // Reject frames whose detected MIDI is more than this many semitones above
 // the last stable detection. SPICE octave-doubles on noisy / breathy frames
