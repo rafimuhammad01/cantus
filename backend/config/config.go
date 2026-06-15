@@ -26,7 +26,7 @@ type Config struct {
 	RubberbandPath          string // RUBBERBAND_PATH, default "rubberband"
 	FFmpegPath              string // FFMPEG_PATH, default "ffmpeg"
 
-	YTDLPPoTBaseURL string // YT_DLP_POT_BASE_URL, optional; when set, yt-dlp passes --extractor-args to use the bgutil PoT sidecar.
+	YTDLPCookiesPath string // YT_DLP_COOKIES_PATH, optional; when set, yt-dlp passes --cookies <path> to bypass YouTube's bot gate.
 
 	StorageBackend      string // STORAGE_BACKEND, "local" or "r2"; default "local"
 	BlobBaseURL         string // BLOB_BASE_URL, default "http://localhost:8080" (local mode only)
@@ -65,7 +65,7 @@ func Load() (*Config, error) {
 	cfg.AllowedOrigins = getEnvString("ALLOWED_ORIGINS", "http://localhost:5173")
 	cfg.RubberbandPath = getEnvString("RUBBERBAND_PATH", "rubberband")
 	cfg.FFmpegPath = getEnvString("FFMPEG_PATH", "ffmpeg")
-	cfg.YTDLPPoTBaseURL = getEnvString("YT_DLP_POT_BASE_URL", "")
+	cfg.YTDLPCookiesPath = getEnvString("YT_DLP_COOKIES_PATH", "")
 
 	// Integer fields with defaults.
 	var err error

@@ -41,13 +41,11 @@ RUN curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-x8
     && rm /tmp/deno.zip \
     && deno --version
 
-# Install yt-dlp + the bgutil PoT provider plugin into a dedicated venv so the
-# system Python stays clean and the plugin lives next to the yt-dlp it patches.
+# Install yt-dlp into a dedicated venv so the system Python stays clean.
+# Cookies + EJS JS solver scripts handle the bot/auth gate; no PoT sidecar needed.
 RUN python3 -m venv /opt/ytdlp \
     && /opt/ytdlp/bin/pip install --no-cache-dir --upgrade pip \
-    && /opt/ytdlp/bin/pip install --no-cache-dir \
-        yt-dlp \
-        bgutil-ytdlp-pot-provider \
+    && /opt/ytdlp/bin/pip install --no-cache-dir yt-dlp \
     && ln -s /opt/ytdlp/bin/yt-dlp /usr/local/bin/yt-dlp
 
 WORKDIR /app

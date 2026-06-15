@@ -43,24 +43,27 @@ type Searcher interface {
 
 // PythonYouTubeService handles audio download via yt-dlp and delegates search to a Searcher.
 type PythonYouTubeService struct {
-	search     Searcher
-	signer     *Signer
-	storage    Storage
-	runner     CommandRunner
-	potBaseURL string
+	search      Searcher
+	signer      *Signer
+	storage     Storage
+	runner      CommandRunner
+	cookiesPath string
 }
 
-// NewPythonYouTubeService returns a PythonYouTubeService with the given search delegate, signer, storage, command runner, and optional PoT base URL.
-func NewPythonYouTubeService(search Searcher, signer *Signer, storage Storage, runner CommandRunner, potBaseURL string) *PythonYouTubeService {
-	return &PythonYouTubeService{search: search, signer: signer, storage: storage, runner: runner, potBaseURL: potBaseURL}
+// NewPythonYouTubeService returns a PythonYouTubeService with the given search delegate, signer, storage, command runner, and optional cookies file path.
+func NewPythonYouTubeService(search Searcher, signer *Signer, storage Storage, runner CommandRunner, cookiesPath string) *PythonYouTubeService {
+	return &PythonYouTubeService{search: search, signer: signer, storage: storage, runner: runner, cookiesPath: cookiesPath}
 }
 
-// potArgs returns the yt-dlp args to enable the bgutil PoT provider, or nil if unconfigured.
-func (s *PythonYouTubeService) potArgs() []string {
-	if s.potBaseURL == "" {
-		return nil
+// botGateArgs returns yt-dlp args needed to pass YouTube's auth + JS challenge
+// gates. EJS solver scripts are required by yt-dlp 2026.06.09+ to solve signature
+// and n-challenges; without them only image storyboards are served.
+func (s *PythonYouTubeService) botGateArgs() []string {
+	args := []string{"--remote-components", "ejs:github"}
+	if s.cookiesPath != "" {
+		args = append(args, "--cookies", s.cookiesPath)
 	}
-	return []string{"--extractor-args", "youtubepot-bgutilhttp:base_url=" + s.potBaseURL}
+	return args
 }
 
 // Search delegates to the injected Searcher.
@@ -88,7 +91,7 @@ func (s *PythonYouTubeService) DownloadPreview(ctx context.Context, videoID stri
 
 	outPath := filepath.Join(tmpDir, "preview.mp3")
 
-	args := append(s.potArgs(), []string{
+	args := append(s.botGateArgs(), []string{
 		"--download-sections", "*0-30",
 		"-x", "--audio-format", "mp3",
 		"-o", outPath,
@@ -128,7 +131,7 @@ func (s *PythonYouTubeService) DownloadFull(ctx context.Context, videoID string)
 
 	outPath := filepath.Join(tmpDir, "original.wav")
 
-	args := append(s.potArgs(), []string{
+	args := append(s.botGateArgs(), []string{
 		"-x", "--audio-format", "wav",
 		"-o", outPath,
 		"--quiet", "--no-warnings",

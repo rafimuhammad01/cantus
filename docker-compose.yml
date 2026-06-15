@@ -1,20 +1,13 @@
 services:
-  bgutil:
-    image: brainicism/bgutil-ytdlp-pot-provider:latest
-    restart: unless-stopped
-    expose:
-      - "4416"
-
   backend:
     image: ghcr.io/rafimuhammad01/cantus-backend:latest
     restart: unless-stopped
-    depends_on:
-      - bgutil
     env_file:
       - ./backend/.env
     environment:
-      # Override: in-cluster DNS for the PoT sidecar.
-      YT_DLP_POT_BASE_URL: http://bgutil:4416
+      YT_DLP_COOKIES_PATH: /secrets/youtube-cookies.txt
+    volumes:
+      - ./secrets/youtube-cookies.txt:/secrets/youtube-cookies.txt:rw
     expose:
       - "8080"
 

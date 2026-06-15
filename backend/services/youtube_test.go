@@ -490,52 +490,6 @@ func TestPythonYouTubeService_DownloadFull_ContextCanceled(t *testing.T) {
 	}
 }
 
-func TestDownloadPreview_PoTArgsPassed(t *testing.T) {
-	tests := []struct {
-		name string
-	}{
-		{name: "PoT args appear before URL when potBaseURL is set"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			runner := &fakeRunner{writeBytes: []byte("fake mp3 data")}
-			store := &fakeStorage{}
-			signer := newTestSigner(t)
-			svc := services.NewPythonYouTubeService(nil, signer, store, runner, "http://bgutil:4416")
-
-			if err := svc.DownloadPreview(context.Background(), "abcdefghijk"); err != nil {
-				t.Fatalf("download: %v", err)
-			}
-
-			captured := runner.gotArgs
-			found := false
-			for i, a := range captured {
-				if a == "--extractor-args" && i+1 < len(captured) && captured[i+1] == "youtubepot-bgutilhttp:base_url=http://bgutil:4416" {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Fatalf("expected --extractor-args with PoT base_url, got: %v", captured)
-			}
-
-			// -- and URL must still appear at the end.
-			dashDashIdx := indexArg(captured, "--")
-			urlIdx := indexArg(captured, "https://youtu.be/abcdefghijk")
-			if dashDashIdx < 0 {
-				t.Error("args: missing -- separator")
-			}
-			if urlIdx < 0 {
-				t.Error("args: URL not found")
-			}
-			if dashDashIdx >= 0 && urlIdx >= 0 && dashDashIdx >= urlIdx {
-				t.Errorf("args: -- (idx %d) must appear before URL (idx %d)", dashDashIdx, urlIdx)
-			}
-		})
-	}
-}
-
 // mustContainArg fails if arg is not present in args.
 func mustContainArg(t *testing.T, args []string, arg string) {
 	t.Helper()
