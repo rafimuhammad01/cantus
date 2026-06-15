@@ -23,7 +23,7 @@ type JobRunner struct {
 	shifter   Shifter
 	jobStore  *JobStore
 	semaphore chan struct{} // capacity = maxConcurrent
-	inflight  sync.Map      // key: videoID (string) → value: jobID (string)
+	inflight  sync.Map      // key: "videoID:semitones" (string) → value: jobID (string)
 }
 
 // NewJobRunner creates a JobRunner with bounded concurrency. maxConcurrent is clamped to >= 1.
@@ -49,18 +49,24 @@ func NewJobRunner(
 // It returns the job ID immediately; the goroutine blocks on the semaphore until a
 // slot is available before starting.
 //
-// If an identical videoID is already in-flight, Submit returns the existing jobID
-// without spawning a second goroutine — deduplication at the videoID level prevents
-// parallel Demucs runs racing on the same stem files.
+// Dedup key is (videoID, semitones). A repeat submit for the same pair returns the
+// in-flight jobID without spawning a second goroutine. Different semitones for the
+// same videoID start independent jobs — Separate output is cached, so the second
+// job typically only re-runs the cheap Shift stage. With MAX_CONCURRENT_JOBS=1
+// (default) jobs serialize on the semaphore, so the second job naturally sees the
+// first's stems already committed.
 func (r *JobRunner) Submit(videoID string, semitones int) string {
-	// Fast path: avoid crypto/rand + hex encode when the videoID is already in-flight.
-	if existing, ok := r.inflight.Load(videoID); ok {
+	key := videoID + ":" + strconv.Itoa(semitones)
+
+	// Fast path: avoid crypto/rand + hex encode when this (videoID, semitones) is
+	// already in-flight.
+	if existing, ok := r.inflight.Load(key); ok {
 		return existing.(string)
 	}
 
 	jobID := newJobID()
 
-	actual, loaded := r.inflight.LoadOrStore(videoID, jobID)
+	actual, loaded := r.inflight.LoadOrStore(key, jobID)
 	if loaded {
 		// Another goroutine won the race between Load and LoadOrStore; return its jobID.
 		return actual.(string)
@@ -75,8 +81,8 @@ func (r *JobRunner) Submit(videoID string, semitones int) string {
 
 	go func() {
 		// Delete the inflight entry when the goroutine exits — covers both normal
-		// completion and panics — so future submits for this videoID start fresh.
-		defer r.inflight.Delete(videoID)
+		// completion and panics — so future submits for this key start fresh.
+		defer r.inflight.Delete(key)
 
 		r.semaphore <- struct{}{}
 		defer func() { <-r.semaphore }()

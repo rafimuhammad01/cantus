@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -476,10 +477,11 @@ func TestJobRunner_Submit_RunsAsync(t *testing.T) {
 
 func TestJobRunner_Submit_Dedup(t *testing.T) {
 	// ---------------------------------------------------------------------------
-	// Case 1: concurrent submits for the same videoID return the same jobID and
-	// only one pipeline run (Separate called once).
+	// Case 1: concurrent submits for the same (videoID, semitones) pair return
+	// the same jobID. Different semitones for the same videoID start independent
+	// jobs but share the cached stems — Separate runs at most once.
 	// ---------------------------------------------------------------------------
-	t.Run("concurrent same videoID returns same jobID", func(t *testing.T) {
+	t.Run("concurrent same key returns same jobID; different semitones spawns separate job", func(t *testing.T) {
 		root := t.TempDir()
 		storage, err := services.NewLocalDiskStorage(root)
 		if err != nil {
@@ -488,27 +490,24 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		jobStore := services.NewJobStore(time.Hour)
 		fakeYT := &fakeYouTubeJob{}
 
-		// ready is closed by separateFn on first entry, signalling that the first
-		// goroutine has reached Separate and is about to block.
-		// blockSeparate is closed by the test to release the first goroutine.
-		ready := make(chan struct{})
-		blockSeparate := make(chan struct{})
 		fakeShiftDedup1 := &fakeShifter{}
 
 		var gpuSeparateCalls int
+		var separateMu sync.Mutex
 		fakeProc := &fakeProcessorJob{
 			separateFn: func(_ context.Context, _, _, _ string) error {
+				separateMu.Lock()
 				gpuSeparateCalls++
-				// Signal that we have entered Separate, then block until the test releases us.
-				close(ready)
-				<-blockSeparate
+				separateMu.Unlock()
 				commitFile(t, storage, storage.Key("dedupvideo1", "vocals.wav"), "v")
 				commitFile(t, storage, storage.Key("dedupvideo1", "no_vocals.wav"), "nv")
 				return nil
 			},
 		}
 
-		runner := services.NewJobRunner(fakeYT, storage, fakeProc, fakeShiftDedup1, jobStore, 2) // allow 2 concurrent so semaphore is not the bottleneck
+		// Semaphore=1 → jobs serialize. Second job sees stems already committed
+		// by the first job and skips Separate via storage.Has().
+		runner := services.NewJobRunner(fakeYT, storage, fakeProc, fakeShiftDedup1, jobStore, 1)
 
 		const videoID = "dedupvideo1"
 
@@ -520,34 +519,30 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 			commitFile(t, storage, storage.Key(videoID, "melody.json"), `{}`)
 			return nil
 		}
-		// fakeShiftDedup1 default fn writes bytes to out path — sufficient for Commit+Verify.
 
-		// First submit — this goroutine will block in separateFn waiting for blockSeparate.
-		jobID1 := runner.Submit(videoID, 0)
-
-		// Wait until the first goroutine has entered Separate (deterministic, no sleep).
-		select {
-		case <-ready:
-		case <-time.After(2 * time.Second):
-			t.Fatal("first Submit never reached Separate")
+		// Two submits for the SAME (videoID, semitones=0) — must dedup.
+		jobID1a := runner.Submit(videoID, 0)
+		jobID1b := runner.Submit(videoID, 0)
+		if jobID1a != jobID1b {
+			t.Errorf("identical (videoID, semitones) dedup: jobID1a=%q, jobID1b=%q should be equal", jobID1a, jobID1b)
 		}
 
-		// Second submit for the same videoID (different semitones) — must return same jobID.
+		// Submit for the SAME videoID but DIFFERENT semitones — must spawn a new job.
 		jobID2 := runner.Submit(videoID, 3)
-
-		if jobID1 != jobID2 {
-			t.Errorf("expected dedup: jobID1=%q, jobID2=%q should be equal", jobID1, jobID2)
+		if jobID1a == jobID2 {
+			t.Errorf("different semitones should produce different jobIDs, but got same: %q", jobID1a)
 		}
 
-		// Unblock the first pipeline.
-		close(blockSeparate)
+		// Wait for both to complete.
+		waitForStatus(t, jobStore, jobID1a, models.StatusDone, 3*time.Second)
+		waitForStatus(t, jobStore, jobID2, models.StatusDone, 3*time.Second)
 
-		// Wait for completion.
-		waitForStatus(t, jobStore, jobID1, models.StatusDone, 3*time.Second)
-
-		// Only ONE Separate call should have happened.
-		if gpuSeparateCalls != 1 {
-			t.Errorf("separateCalls: got %d, want 1 (dedup should prevent second pipeline)", gpuSeparateCalls)
+		// Only ONE Separate call total — the second job hits the stem cache.
+		separateMu.Lock()
+		got := gpuSeparateCalls
+		separateMu.Unlock()
+		if got != 1 {
+			t.Errorf("separateCalls: got %d, want 1 (stem cache should prevent second Separate)", got)
 		}
 	})
 
