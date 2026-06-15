@@ -102,7 +102,7 @@ class MelodyService:
         times, freqs, conf, _ = self._predict(
             audio,
             sr,
-            model_capacity="large",
+            model_capacity="medium",
             step_size=STEP_SIZE_MS,
             viterbi=True,
         )
