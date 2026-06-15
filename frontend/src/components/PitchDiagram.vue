@@ -350,19 +350,27 @@ const audioError = ref<string | null>(null);
 async function startPlayAndSing(): Promise<void> {
   audioError.value = null;
 
-  // Kick audio playback synchronously off the click event — browsers tie autoplay
-  // permission to the call site of the user gesture, so any await before this risks
-  // losing it.
-  const playPromise = props.audioEl.play();
-
+  // Ask for mic FIRST. Modern browsers preserve user activation across an awaited
+  // permission prompt, so we can still call .play() after — and the UX is much
+  // better: no song blasting in the background while the user reads the prompt.
+  // If the user denies (or the mic errors), we still play the song so they can
+  // listen without singing.
   await pitchDetection.start();
-  if (pitchDetection.error.value) {
-    props.audioEl.pause();
-    return;
+
+  // The audio element can land in an error state if the src was swapped to a
+  // URL that 404'd (e.g. transpose before generate completed). Reset it before
+  // calling play() — load() clears the error and re-fetches.
+  if (props.audioEl.error || props.audioEl.readyState === 0) {
+    try {
+      props.audioEl.load();
+    } catch {
+      // load() rarely throws, but if it does, fall through to play() which will
+      // give us a clearer error message.
+    }
   }
 
   try {
-    await playPromise;
+    await props.audioEl.play();
   } catch (e) {
     audioError.value = `Audio could not start: ${(e as Error).message ?? "unknown"}`;
     pitchDetection.stop();
