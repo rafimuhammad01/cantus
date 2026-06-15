@@ -18,7 +18,7 @@ const player = usePlayerStore();
 const sse = useSSE();
 const audioPlayerRef = ref<InstanceType<typeof AudioPlayer> | null>(null);
 
-const NAV_DEBOUNCE_MS = 250;
+const NAV_DEBOUNCE_MS = 600;
 
 const routeVideoId = computed(() => {
   const v = route.params.videoId;
