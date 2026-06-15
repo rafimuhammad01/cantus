@@ -18,16 +18,28 @@ RUN go build -trimpath -ldflags='-s -w' -o /out/cantus ./cmd/server
 FROM debian:bookworm-slim AS runtime
 
 # yt-dlp needs python3; ffmpeg + rubberband-cli are the CLI shifters; ca-certs
-# for HTTPS to R2/Modal/YouTube; tini for clean PID-1 signal handling.
+# for HTTPS to R2/Modal/YouTube; tini for clean PID-1 signal handling;
+# unzip + curl for the deno install below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
+        curl \
         ffmpeg \
         rubberband-cli \
         python3 \
         python3-pip \
         python3-venv \
         tini \
+        unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Deno: yt-dlp now requires a JS runtime to solve YouTube's player JS
+# challenges. Without it, only LOGIN_REQUIRED clients are available and every
+# extraction fails with "Sign in to confirm you're not a bot."
+RUN curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip \
+        -o /tmp/deno.zip \
+    && unzip -q /tmp/deno.zip -d /usr/local/bin \
+    && rm /tmp/deno.zip \
+    && deno --version
 
 # Install yt-dlp + the bgutil PoT provider plugin into a dedicated venv so the
 # system Python stays clean and the plugin lives next to the yt-dlp it patches.
