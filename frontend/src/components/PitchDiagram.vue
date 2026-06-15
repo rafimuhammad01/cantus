@@ -1,11 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
-import {
-  usePitchDetectionSPICE,
-  preloadSPICE,
-  isModelReady,
-  loadStep,
-} from "@/composables/usePitchDetectionSPICE";
+import { usePitchDetection } from "@/composables/usePitchDetection";
 import { usePitchStore } from "@/stores/pitch";
 import { hzToMidi, midiToNoteName } from "@/utils/pitch";
 import type { MelodyResponse } from "@/services/api";
@@ -176,7 +171,7 @@ function interpolateTargetMidi(t: number): number | null {
 
 // ─── Reactive state ───────────────────────────────────────────────────────────
 
-const pitchDetection = usePitchDetectionSPICE();
+const pitchDetection = usePitchDetection();
 const pitchStore = usePitchStore();
 const svgEl = ref<SVGSVGElement | null>(null);
 const svgWrapEl = ref<HTMLDivElement | null>(null);
@@ -411,17 +406,7 @@ function onEnded(): void {
 
 let resizeObserver: ResizeObserver | null = null;
 
-const preloadError = ref<string | null>(null);
-
 onMounted(() => {
-  // Kick off SPICE download in the background so it's ready by the time
-  // the user is ready to sing. Audio playback waits for this.
-  preloadSPICE().catch((e) => {
-    const msg = (e as Error)?.message ?? String(e);
-    preloadError.value = msg;
-    console.error("[spice] preload failed:", e);
-  });
-
   props.audioEl.addEventListener("ended", onEnded);
   rafId = requestAnimationFrame(tick);
 
@@ -468,7 +453,6 @@ onBeforeUnmount(() => {
   >
     <div class="flex items-center justify-between mb-3">
       <button
-        v-if="isModelReady"
         @click="togglePlayAndSing"
         class="px-5 py-2 rounded-full text-sm font-medium transition-colors"
         :class="
@@ -479,19 +463,6 @@ onBeforeUnmount(() => {
       >
         {{ pitchDetection.isActive.value ? "⏸ Pause" : "▶ Play & Sing" }}
       </button>
-      <span
-        v-else-if="preloadError"
-        class="px-5 py-2 rounded-full text-xs font-medium text-red-300 bg-red-900/40 cursor-default break-all max-w-[80%]"
-        :title="preloadError"
-      >
-        Pitch detector failed: {{ preloadError }}
-      </span>
-      <span
-        v-else
-        class="px-5 py-2 rounded-full text-sm font-medium text-[var(--color-text-muted)] bg-[var(--color-surface-2)] cursor-default"
-      >
-        Loading pitch detector... [{{ loadStep }}]
-      </span>
       <span
         v-if="pitchStore.hitRate !== null"
         class="text-sm text-[var(--color-text)] tnum"
