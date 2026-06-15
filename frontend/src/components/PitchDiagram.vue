@@ -410,11 +410,15 @@ function onEnded(): void {
 
 let resizeObserver: ResizeObserver | null = null;
 
+const preloadError = ref<string | null>(null);
+
 onMounted(() => {
   // Kick off SPICE download in the background so it's ready by the time
   // the user is ready to sing. Audio playback waits for this.
-  preloadSPICE().catch(() => {
-    // Errors surface through pitchDetection.error when user clicks Play & Sing.
+  preloadSPICE().catch((e) => {
+    const msg = (e as Error)?.message ?? String(e);
+    preloadError.value = msg;
+    console.error("[spice] preload failed:", e);
   });
 
   props.audioEl.addEventListener("ended", onEnded);
@@ -474,6 +478,13 @@ onBeforeUnmount(() => {
       >
         {{ pitchDetection.isActive.value ? "⏸ Pause" : "▶ Play & Sing" }}
       </button>
+      <span
+        v-else-if="preloadError"
+        class="px-5 py-2 rounded-full text-xs font-medium text-red-300 bg-red-900/40 cursor-default break-all max-w-[80%]"
+        :title="preloadError"
+      >
+        Pitch detector failed: {{ preloadError }}
+      </span>
       <span
         v-else
         class="px-5 py-2 rounded-full text-sm font-medium text-[var(--color-text-muted)] bg-[var(--color-surface-2)] cursor-default"
