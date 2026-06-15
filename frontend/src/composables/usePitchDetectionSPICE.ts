@@ -73,35 +73,42 @@ const SPICE_URL = "/spice-model/model.json";
 
 let modelPromise: Promise<tf.GraphModel> | null = null;
 
+async function loadWithBackend(
+  backend: "webgl" | "cpu",
+  timeoutMs: number,
+): Promise<tf.GraphModel> {
+  _loadStep.value = `set-backend:${backend}`;
+  console.log(`[spice] setBackend(${backend})`);
+  await tf.setBackend(backend);
+  await tf.ready();
+  _loadStep.value = `load-graph:${backend}`;
+  console.log(`[spice] loadGraphModel on ${backend}`);
+  return withTimeout(
+    tf.loadGraphModel(SPICE_URL),
+    timeoutMs,
+    `loadGraphModel(${backend}) timeout`,
+  );
+}
+
 function getModel(): Promise<tf.GraphModel> {
   if (!modelPromise) {
     modelPromise = (async () => {
       try {
-        _loadStep.value = "tf-ready";
-        console.log("[spice] step: tf.ready()");
-        await withTimeout(tf.ready(), 10000, "tf.ready timeout");
-        const backend = tf.getBackend();
-        _loadStep.value = `backend:${backend}`;
-        console.log("[spice] backend:", backend);
-
-        _loadStep.value = "fetch-json";
-        console.log("[spice] step: fetch model.json");
-        const probe = await withTimeout(
-          fetch(SPICE_URL, { method: "GET" }),
-          10000,
-          "model.json fetch timeout",
-        );
-        if (!probe.ok) {
-          throw new Error(`model.json HTTP ${probe.status}`);
+        // Try WebGL first (fast on desktop and most Android). On iOS Safari
+        // the WebGL weight upload step hangs indefinitely for SPICE; the
+        // 15s budget converts that hang into a fallback to CPU, which is
+        // slower per-inference but actually works.
+        try {
+          const m = await loadWithBackend("webgl", 15000);
+          _loadStep.value = "ready";
+          _isModelReady.value = true;
+          return m;
+        } catch (webglErr) {
+          console.warn("[spice] webgl path failed, retrying on cpu:", webglErr);
+          _loadStep.value = "fallback-cpu";
         }
 
-        _loadStep.value = "load-graph";
-        console.log("[spice] step: tf.loadGraphModel");
-        const m = await withTimeout(
-          tf.loadGraphModel(SPICE_URL),
-          30000,
-          "loadGraphModel timeout",
-        );
+        const m = await loadWithBackend("cpu", 30000);
         _loadStep.value = "ready";
         _isModelReady.value = true;
         return m;
