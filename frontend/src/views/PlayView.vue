@@ -11,6 +11,8 @@ import VocalOctaveSelector from "@/components/VocalOctaveSelector.vue";
 import AudioPlayer from "@/components/AudioPlayer.vue";
 import ProcessingStatus from "@/components/ProcessingStatus.vue";
 import PitchDiagram from "@/components/PitchDiagram.vue";
+import LyricsPanel from "@/components/LyricsPanel.vue";
+import { useLyrics, type LyricsSongBundle } from "@/composables/useLyrics";
 
 const route = useRoute();
 const router = useRouter();
@@ -19,6 +21,45 @@ const sse = useSSE();
 const audioPlayerRef = ref<InstanceType<typeof AudioPlayer> | null>(null);
 
 const NAV_DEBOUNCE_MS = 600;
+
+// Lyrics — currentTimeSec driven by the AudioPlayer's timeupdate event.
+const currentTimeSec = ref(0);
+const lyricsSong = computed<LyricsSongBundle | null>(() => {
+  if (!player.song) return null;
+  return {
+    videoId: player.song.video_id,
+    lyricsSig: player.song.lyrics_sig,
+    title: player.song.title,
+    artist: player.song.artist,
+    album: player.song.album,
+    durationSec: player.song.duration_sec,
+  };
+});
+const {
+  available: lyricsAvailable,
+  lines: lyricsLines,
+  plain: lyricsPlain,
+  activeIndex: lyricsActiveIndex,
+  loading: lyricsLoading,
+} = useLyrics(currentTimeSec, lyricsSong);
+
+function onAudioTimeUpdate() {
+  const el = audioPlayerRef.value?.audio;
+  if (el) currentTimeSec.value = el.currentTime;
+}
+
+// Attach timeupdate to the native audio element once the AudioPlayer mounts.
+watch(
+  () => audioPlayerRef.value?.audio,
+  (audioEl, prevAudioEl) => {
+    if (prevAudioEl) {
+      prevAudioEl.removeEventListener("timeupdate", onAudioTimeUpdate);
+    }
+    if (audioEl) {
+      audioEl.addEventListener("timeupdate", onAudioTimeUpdate);
+    }
+  },
+);
 
 const routeVideoId = computed(() => {
   const v = route.params.videoId;
@@ -285,15 +326,29 @@ onUnmounted(() => {
           />
         </div>
 
-        <PitchDiagram
-          v-else-if="player.melody && audioPlayerRef?.audio"
-          :key="`${routeSemitones}-${player.vocalOctaveShift}`"
-          :audio-el="audioPlayerRef.audio!"
-          :melody="player.melody"
-          :vocal-octave-shift="player.vocalOctaveShift"
-          fill
-          class="flex-1 min-h-0"
-        />
+        <template v-else-if="player.melody && audioPlayerRef?.audio">
+          <div class="flex-1 min-h-0 flex flex-col gap-3">
+            <PitchDiagram
+              :key="`${routeSemitones}-${player.vocalOctaveShift}`"
+              :audio-el="audioPlayerRef.audio!"
+              :melody="player.melody"
+              :vocal-octave-shift="player.vocalOctaveShift"
+              fill
+              class="flex-1 min-h-0"
+            />
+            <div
+              class="h-32 sm:h-40 shrink-0 overflow-hidden rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]"
+            >
+              <LyricsPanel
+                :lines="lyricsLines"
+                :active-index="lyricsActiveIndex"
+                :plain="lyricsPlain"
+                :available="lyricsAvailable"
+                :loading="lyricsLoading"
+              />
+            </div>
+          </div>
+        </template>
       </main>
 
       <!-- Sticky bottom transport (scrubber only — Play & Sing lives in PitchDiagram) -->

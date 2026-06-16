@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { usePlayerStore } from "@/stores/player";
 import { shortKey, transposeKey } from "@/utils/key";
@@ -9,11 +9,52 @@ import VocalOctaveSelector from "@/components/VocalOctaveSelector.vue";
 import AudioPlayer from "@/components/AudioPlayer.vue";
 import ProcessingStatus from "@/components/ProcessingStatus.vue";
 import PitchDiagram from "@/components/PitchDiagram.vue";
+import LyricsPanel from "@/components/LyricsPanel.vue";
+import { useLyrics, type LyricsSongBundle } from "@/composables/useLyrics";
 
 const route = useRoute();
 const router = useRouter();
 const player = usePlayerStore();
 const audioPlayerRef = ref<InstanceType<typeof AudioPlayer> | null>(null);
+
+// Lyrics — currentTimeSec driven by the AudioPlayer's timeupdate event.
+// Preview clip is the first 30s of the song, so currentTime maps 1:1 to song time.
+const currentTimeSec = ref(0);
+const lyricsSong = computed<LyricsSongBundle | null>(() => {
+  if (!player.song) return null;
+  return {
+    videoId: player.song.video_id,
+    lyricsSig: player.song.lyrics_sig,
+    title: player.song.title,
+    artist: player.song.artist,
+    album: player.song.album,
+    durationSec: player.song.duration_sec,
+  };
+});
+const {
+  available: lyricsAvailable,
+  lines: lyricsLines,
+  plain: lyricsPlain,
+  activeIndex: lyricsActiveIndex,
+  loading: lyricsLoading,
+} = useLyrics(currentTimeSec, lyricsSong);
+
+function onAudioTimeUpdate() {
+  const el = audioPlayerRef.value?.audio;
+  if (el) currentTimeSec.value = el.currentTime;
+}
+
+watch(
+  () => audioPlayerRef.value?.audio,
+  (audioEl, prevAudioEl) => {
+    if (prevAudioEl) {
+      prevAudioEl.removeEventListener("timeupdate", onAudioTimeUpdate);
+    }
+    if (audioEl) {
+      audioEl.addEventListener("timeupdate", onAudioTimeUpdate);
+    }
+  },
+);
 
 // Short debounce — long enough to collapse mash-clicks, short enough that the
 // transition feels snappy. We pause audio + show "Shifting…" immediately on
@@ -272,6 +313,18 @@ onUnmounted(() => {
               :vocal-octave-shift="player.vocalOctaveShift"
               class="mt-4"
             />
+            <div
+              v-if="player.previewStemsReady && audioPlayerRef?.audio"
+              class="mt-3 h-32 sm:h-40 overflow-hidden rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)]"
+            >
+              <LyricsPanel
+                :lines="lyricsLines"
+                :active-index="lyricsActiveIndex"
+                :plain="lyricsPlain"
+                :available="lyricsAvailable"
+                :loading="lyricsLoading"
+              />
+            </div>
             <div class="mt-4 flex justify-center">
               <VocalOctaveSelector
                 :current="player.vocalOctaveShift"

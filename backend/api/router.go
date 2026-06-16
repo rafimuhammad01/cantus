@@ -14,7 +14,7 @@ import (
 // NewRouter builds and returns the chi router with all middleware and routes.
 // blobTokener controls whether /internal/blob/* is mounted: nil = not mounted
 // (R2 mode); non-nil = mounted (local mode, serves presigned-style blob access).
-func NewRouter(allowedOrigins []string, log zerolog.Logger, svc services.YouTubeService, signer *services.Signer, storage services.Storage, processor services.ProcessorClient, shifter services.Shifter, jobRunner services.JobSubmitter, jobStore *services.JobStore, blobTokener *services.BlobTokener) *chi.Mux {
+func NewRouter(allowedOrigins []string, log zerolog.Logger, svc services.YouTubeService, signer *services.Signer, storage services.Storage, processor services.ProcessorClient, shifter services.Shifter, jobRunner services.JobSubmitter, jobStore *services.JobStore, blobTokener *services.BlobTokener, lrclib services.LRCLib) *chi.Mux {
 	mux := chi.NewRouter()
 
 	mux.Use(middleware.RequestID)
@@ -39,6 +39,7 @@ func NewRouter(allowedOrigins []string, log zerolog.Logger, svc services.YouTube
 	mux.Get("/api/melody/{videoId}/{semitones}", handlers.Melody(signer, storage))
 	mux.Post("/api/generate", handlers.Generate(signer, jobRunner))
 	mux.Get("/api/status/{jobId}", handlers.Status(jobStore))
+	mux.Get("/api/lyrics/{videoId}", handlers.Lyrics(signer, storage, lrclib))
 
 	if blobTokener != nil {
 		mux.HandleFunc("/internal/blob/*", handlers.Blob(storage, blobTokener))

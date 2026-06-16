@@ -2,11 +2,23 @@
 export interface SearchResult {
   video_id: string;
   sig: string;
+  lyrics_sig: string;
   title: string;
   artist: string;
   album: string;
   duration_sec: number;
   thumbnail_url: string;
+}
+
+export interface Cue {
+  start_ms: number;
+  text: string;
+}
+
+export interface LyricsResponse {
+  available: boolean;
+  synced: Cue[];
+  plain: string;
 }
 
 export interface SearchResponse {
@@ -180,4 +192,24 @@ export async function getPreviewMelody(
 /** Returns the GET URL for the clean instrumental stem (no_vocals.mp3). */
 export function previewAudioURL(videoId: string, sig: string): string {
   return `/api/preview-audio/${videoId}?sig=${sig}`;
+}
+
+export async function getLyrics(
+  videoId: string,
+  lyricsSig: string,
+  title: string,
+  artist: string,
+  album: string,
+  durationSec: number,
+): Promise<LyricsResponse> {
+  const params = new URLSearchParams({
+    lyrics_sig: lyricsSig,
+    title,
+    artist,
+    album,
+    duration_sec: String(durationSec),
+  });
+  const resp = await fetch(`/api/lyrics/${videoId}?${params.toString()}`);
+  await checkOk(resp);
+  return resp.json() as Promise<LyricsResponse>;
 }

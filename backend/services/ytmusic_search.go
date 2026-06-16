@@ -149,12 +149,15 @@ func (s *YTMusicSearch) mapItem(t *ytmusic.TrackItem) models.SearchResult {
 	if n := len(t.Thumbnails); n > 0 {
 		thumb = t.Thumbnails[n-1].URL
 	}
+	title := t.Title
+	album := t.Album.Name
 	return models.SearchResult{
 		VideoID:      t.VideoID,
 		Sig:          s.signer.Sign(t.VideoID),
-		Title:        t.Title,
+		LyricsSig:    s.signer.SignLyrics(t.VideoID, title, artist, album, t.Duration),
+		Title:        title,
 		Artist:       artist,
-		Album:        t.Album.Name,
+		Album:        album,
 		DurationSec:  t.Duration,
 		ThumbnailURL: thumb,
 	}

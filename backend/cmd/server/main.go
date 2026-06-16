@@ -87,7 +87,9 @@ func main() {
 	maxJobs := cfg.MaxConcurrentJobs
 	jobRunner := services.NewJobRunner(svc, storage, processor, shifter, jobStore, maxJobs)
 
-	r := api.NewRouter(origins, log, svc, signer, storage, processor, shifter, jobRunner, jobStore, blobTokener)
+	lrclibClient := services.NewLRCLibClient("")
+
+	r := api.NewRouter(origins, log, svc, signer, storage, processor, shifter, jobRunner, jobStore, blobTokener, lrclibClient)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
