@@ -54,7 +54,7 @@ watch(
   <!-- Synced karaoke display -->
   <div
     v-else
-    class="h-full overflow-y-auto px-4 py-6 flex flex-col items-center gap-1"
+    class="h-full overflow-y-auto px-4 py-6 flex flex-col items-center gap-1 lyrics-fade"
   >
     <div
       v-for="(cue, i) in lines"
@@ -83,3 +83,22 @@ watch(
     </div>
   </div>
 </template>
+
+<style scoped>
+.lyrics-fade {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 24px,
+    #000 calc(100% - 24px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 24px,
+    #000 calc(100% - 24px),
+    transparent 100%
+  );
+}
+</style>

@@ -317,38 +317,51 @@ onUnmounted(() => {
 
       <!-- Main hero area -->
       <main
-        class="flex-1 min-h-0 w-full max-w-6xl mx-auto px-4 pt-8 pb-24 flex flex-col"
+        class="flex-1 min-h-0 w-full max-w-6xl mx-auto px-4 pt-4 pb-24 flex flex-col"
       >
-        <div v-if="!isDone" class="py-12">
-          <ProcessingStatus
-            :status="player.jobStatus"
-            :message="player.jobMessage"
-          />
-        </div>
-
-        <template v-else-if="player.melody && audioPlayerRef?.audio">
-          <div class="flex-1 min-h-0 flex flex-col gap-3">
+        <div class="flex-1 min-h-0 flex flex-col gap-3">
+          <!-- PitchDiagram card — stable height regardless of job state -->
+          <div class="relative flex-1 min-h-0">
+            <!-- Job still running -->
+            <div
+              v-if="!isDone"
+              class="absolute inset-0 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-center"
+            >
+              <ProcessingStatus
+                :status="player.jobStatus"
+                :message="player.jobMessage"
+              />
+            </div>
+            <!-- Done + melody loaded -->
             <PitchDiagram
+              v-else-if="player.melody && audioPlayerRef?.audio"
               :key="`${routeSemitones}-${player.vocalOctaveShift}`"
               :audio-el="audioPlayerRef.audio!"
               :melody="player.melody"
               :vocal-octave-shift="player.vocalOctaveShift"
               fill
-              class="flex-1 min-h-0"
+              class="h-full w-full"
             />
+            <!-- Done but melody not yet available — blank placeholder -->
             <div
-              class="h-32 sm:h-40 shrink-0 overflow-hidden rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]"
-            >
-              <LyricsPanel
-                :lines="lyricsLines"
-                :active-index="lyricsActiveIndex"
-                :plain="lyricsPlain"
-                :available="lyricsAvailable"
-                :loading="lyricsLoading"
-              />
-            </div>
+              v-else
+              class="absolute inset-0 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]"
+            />
           </div>
-        </template>
+
+          <!-- Lyrics card -->
+          <div
+            class="h-32 sm:h-40 shrink-0 overflow-hidden rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]"
+          >
+            <LyricsPanel
+              :lines="lyricsLines"
+              :active-index="lyricsActiveIndex"
+              :plain="lyricsPlain"
+              :available="lyricsAvailable"
+              :loading="lyricsLoading"
+            />
+          </div>
+        </div>
       </main>
 
       <!-- Sticky bottom transport (scrubber only — Play & Sing lives in PitchDiagram) -->

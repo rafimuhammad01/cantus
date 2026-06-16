@@ -417,14 +417,14 @@ onMounted(() => {
       if (!entry) return;
       svgWidth.value = entry.contentRect.width || 600;
       if (props.fill) {
-        SVG_HEIGHT.value = Math.max(240, Math.floor(entry.contentRect.height));
+        SVG_HEIGHT.value = Math.max(1, Math.floor(entry.contentRect.height));
       }
     });
     resizeObserver.observe(observeTarget);
     const rect = observeTarget.getBoundingClientRect();
     svgWidth.value = rect.width || 600;
     if (props.fill) {
-      SVG_HEIGHT.value = Math.max(240, Math.floor(rect.height));
+      SVG_HEIGHT.value = Math.max(1, Math.floor(rect.height));
     }
   }
 
@@ -448,7 +448,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div
-    class="rounded-2xl p-4 bg-[var(--color-surface)] border border-[var(--color-border)]"
+    class="rounded-2xl p-4 bg-[var(--color-surface)] border border-[var(--color-border)] overflow-hidden"
     :class="props.fill ? 'flex flex-col h-full' : ''"
   >
     <div class="flex items-center justify-between mb-3">

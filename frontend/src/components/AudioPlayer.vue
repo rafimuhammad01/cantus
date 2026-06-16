@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { ref, watch, onUnmounted, computed } from "vue";
+import { ref, watch, onUnmounted, computed, useSlots } from "vue";
 
 const props = defineProps<{
   src: string;
   hidePlayButton?: boolean;
   variant?: "default" | "bottom-bar";
 }>();
+const slots = useSlots();
 const audio = ref<HTMLAudioElement | null>(null);
+const hasCta = computed(() => !!slots.cta);
 const isPlaying = ref(false);
 const currentTime = ref(0);
 const duration = ref(0);
@@ -71,7 +73,7 @@ defineExpose({ audio });
   <div
     :class="
       isBottomBar
-        ? 'fixed bottom-0 inset-x-0 z-20 bg-[var(--color-surface)]/95 backdrop-blur border-t border-[var(--color-border)] px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]'
+        ? 'fixed bottom-0 inset-x-0 z-20 bg-[var(--color-surface)]/95 backdrop-blur border-t border-[var(--color-border)] px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]'
         : 'w-full'
     "
   >
@@ -119,6 +121,10 @@ defineExpose({ audio });
           {{ fmt(duration) }}
         </span>
       </div>
+    </div>
+    <!-- CTA slot: rendered below the scrubber row when provided (Preview only) -->
+    <div v-if="isBottomBar && hasCta" class="max-w-4xl mx-auto mt-2">
+      <slot name="cta" />
     </div>
   </div>
 </template>

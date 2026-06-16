@@ -100,12 +100,6 @@ const shiftPending = ref(false);
 const pendingSemitones = ref(player.semitones);
 let shiftTimer: ReturnType<typeof setTimeout> | null = null;
 
-function fmtDuration(sec: number): string {
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
 function onSemitonesChange(n: number) {
   pendingSemitones.value = n;
   if (n === player.semitones) {
@@ -170,208 +164,217 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-[100dvh] pb-32">
+  <div class="h-[100svh] flex flex-col">
     <template v-if="!noContext">
-      <!-- Backdrop + artwork header -->
-      <div class="relative">
-        <div
-          v-if="player.song?.thumbnail_url"
-          class="absolute inset-0 overflow-hidden -z-10"
-        >
-          <img
-            :src="player.song.thumbnail_url"
-            alt=""
-            class="w-full h-full object-cover scale-110"
-            style="filter: blur(40px) brightness(0.35)"
-          />
-          <div
-            class="absolute inset-0 bg-gradient-to-b from-[var(--color-bg)]/40 via-[var(--color-bg)]/70 to-[var(--color-bg)]"
-          />
-        </div>
-        <div class="max-w-3xl mx-auto px-4 pt-6 pb-12">
+      <!-- Slim top bar -->
+      <header
+        class="shrink-0 bg-[var(--color-surface)]/95 backdrop-blur border-b border-[var(--color-border)]"
+      >
+        <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
           <button
             @click="router.push('/')"
-            class="text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+            class="text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0"
+            aria-label="Back to search"
           >
-            ← Back to search
+            ←
           </button>
-          <div class="mt-8 flex flex-col items-center text-center gap-5">
-            <img
-              v-if="player.song?.thumbnail_url"
-              :src="player.song.thumbnail_url"
-              :alt="player.song.title"
-              class="w-[140px] h-[140px] rounded-xl object-cover shrink-0"
-              style="box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5)"
-            />
-            <div class="min-w-0 max-w-xl">
-              <h1
-                class="font-serif text-[30px] sm:text-[36px] leading-tight text-[var(--color-text)] tracking-tight"
+          <img
+            v-if="player.song?.thumbnail_url"
+            :src="player.song.thumbnail_url"
+            :alt="player.song.title"
+            class="w-10 h-10 rounded-md object-cover shrink-0"
+          />
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 min-w-0">
+              <div
+                class="text-[15px] font-medium leading-tight truncate text-[var(--color-text)]"
               >
                 {{ player.song?.title }}
-              </h1>
-              <div class="mt-2 text-[13px] text-[var(--color-text-muted)] tnum">
-                <span>{{ player.song?.artist }}</span>
-                <template v-if="player.song?.album">
-                  · {{ player.song.album }}</template
-                >
-                <template v-if="player.song?.duration_sec">
-                  · {{ fmtDuration(player.song.duration_sec) }}
-                </template>
               </div>
+              <!-- Preview pill -->
+              <span
+                class="shrink-0 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text-faint)] text-[11px] px-2 py-0.5 leading-none"
+              >
+                Preview · 30s
+              </span>
             </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Transpose (centered, the focus of this screen) -->
-      <div class="max-w-3xl mx-auto px-4">
-        <div class="flex flex-col items-center gap-3">
-          <KeySelector
-            :semitones="pendingSemitones"
-            :disabled="!player.previewStemsReady"
-            :original-key="displayKey ? shortKey(displayKey) : undefined"
-            :transposed-key="
-              displayKey
-                ? shortKey(transposeKey(displayKey, pendingSemitones))
-                : undefined
-            "
-            @change="onSemitonesChange"
-          />
-          <Transition name="fade">
-            <p
-              v-if="pendingSemitones === 0 && player.previewStemsReady"
-              class="text-[12px] text-[var(--color-text-faint)]"
-            >
-              Try lowering if the song feels too high to sing.
-            </p>
-          </Transition>
-        </div>
-
-        <!-- Player + pitch card -->
-        <div class="mt-8 rounded-2xl bg-[var(--color-surface)] p-4">
-          <!-- Loading: preview stems -->
-          <div v-if="player.previewStemsLoading" class="py-8">
-            <ProcessingStatus
-              status="separating"
-              message="Getting your accompaniment ready…"
-            />
-          </div>
-
-          <!-- Error -->
-          <div
-            v-else-if="player.previewStemsError"
-            class="p-4 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-danger)]/60 text-[var(--color-danger)]"
-          >
-            <p class="mb-3">{{ player.previewStemsError }}</p>
-            <button
-              @click="() => void player.loadPreviewStems()"
-              class="px-4 py-2 rounded-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[#0a0a0b] text-sm transition-colors"
-            >
-              Retry
-            </button>
-          </div>
-
-          <!-- Audio + pitch -->
-          <div v-else class="relative">
-            <div
-              v-if="shiftPending"
-              class="absolute inset-0 rounded-2xl bg-[var(--color-surface)]/85 backdrop-blur-sm flex flex-col items-center justify-center gap-2 z-10"
-            >
-              <svg class="animate-spin h-6 w-6" viewBox="0 0 24 24" fill="none">
-                <circle
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="#24242a"
-                  stroke-width="3"
-                />
-                <path
-                  d="M12 2a10 10 0 0 1 10 10"
-                  stroke="#e8a87c"
-                  stroke-width="3"
-                  stroke-linecap="round"
-                />
-              </svg>
-              <span class="text-sm text-[var(--color-text-muted)]"
-                >Tuning to your key…</span
+            <div class="text-[12px] text-[var(--color-text-muted)] truncate">
+              {{ player.song?.artist
+              }}<template v-if="player.song?.album">
+                · {{ player.song.album }}</template
               >
             </div>
-            <AudioPlayer
-              ref="audioPlayerRef"
-              :src="player.audioSrc"
-              :hide-play-button="true"
-            />
-            <PitchDiagram
-              v-if="
-                player.previewStemsReady &&
-                player.previewMelody &&
-                audioPlayerRef?.audio
+          </div>
+          <!-- Desktop controls -->
+          <div class="hidden md:flex items-end gap-6 shrink-0">
+            <KeySelector
+              :semitones="pendingSemitones"
+              :disabled="!player.previewStemsReady"
+              :original-key="displayKey ? shortKey(displayKey) : undefined"
+              :transposed-key="
+                displayKey
+                  ? shortKey(transposeKey(displayKey, pendingSemitones))
+                  : undefined
               "
-              :key="`${player.semitones}-${player.vocalOctaveShift}`"
-              :audio-el="audioPlayerRef.audio!"
-              :melody="player.previewMelody"
-              :vocal-octave-shift="player.vocalOctaveShift"
-              class="mt-4"
+              @change="onSemitonesChange"
             />
-            <div
-              v-if="player.previewStemsReady && audioPlayerRef?.audio"
-              class="mt-3 h-32 sm:h-40 overflow-hidden rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)]"
-            >
-              <LyricsPanel
-                :lines="lyricsLines"
-                :active-index="lyricsActiveIndex"
-                :plain="lyricsPlain"
-                :available="lyricsAvailable"
-                :loading="lyricsLoading"
-              />
-            </div>
-            <div class="mt-4 flex justify-center">
-              <VocalOctaveSelector
-                :current="player.vocalOctaveShift"
-                :disabled="!player.previewStemsReady"
-                :range="
-                  fullVocalRange
-                    ? `${midiToNoteName(fullVocalRange.minMidi)} – ${midiToNoteName(fullVocalRange.maxMidi)}`
-                    : undefined
-                "
-                @change="player.setVocalOctaveShift"
-              />
-            </div>
+            <VocalOctaveSelector
+              :current="player.vocalOctaveShift"
+              :disabled="!fullVocalRange"
+              :range="
+                fullVocalRange
+                  ? `${midiToNoteName(fullVocalRange.minMidi)} – ${midiToNoteName(fullVocalRange.maxMidi)}`
+                  : undefined
+              "
+              @change="player.setVocalOctaveShift"
+            />
           </div>
         </div>
+      </header>
 
-        <p class="mt-6 text-[12px] text-[var(--color-text-faint)] text-center">
-          This is a 30-second preview.
-        </p>
+      <!-- Mobile controls row -->
+      <div
+        class="md:hidden shrink-0 max-w-6xl mx-auto px-4 py-4 flex flex-wrap items-end justify-center gap-4"
+      >
+        <KeySelector
+          :semitones="pendingSemitones"
+          :disabled="!player.previewStemsReady"
+          :original-key="displayKey ? shortKey(displayKey) : undefined"
+          :transposed-key="
+            displayKey
+              ? shortKey(transposeKey(displayKey, pendingSemitones))
+              : undefined
+          "
+          @change="onSemitonesChange"
+        />
+        <VocalOctaveSelector
+          :current="player.vocalOctaveShift"
+          :disabled="!fullVocalRange"
+          :range="
+            fullVocalRange
+              ? `${midiToNoteName(fullVocalRange.minMidi)} – ${midiToNoteName(fullVocalRange.maxMidi)}`
+              : undefined
+          "
+          @change="player.setVocalOctaveShift"
+        />
       </div>
 
-      <!-- Sticky bottom CTA -->
-      <div
-        class="fixed bottom-0 inset-x-0 z-20 bg-[var(--color-bg)]/90 backdrop-blur border-t border-[var(--color-border)] px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+      <!-- Main hero area -->
+      <main
+        class="flex-1 min-h-0 w-full max-w-6xl mx-auto px-4 pt-4 pb-36 flex flex-col"
       >
-        <div class="max-w-md mx-auto flex flex-col items-center gap-1">
+        <div class="flex-1 min-h-0 flex flex-col gap-3">
+          <!-- PitchDiagram card — stable height regardless of loading state -->
+          <div class="relative flex-1 min-h-0">
+            <!-- Loading state — same card footprint as PitchDiagram -->
+            <div
+              v-if="player.previewStemsLoading"
+              class="absolute inset-0 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-center"
+            >
+              <ProcessingStatus
+                status="separating"
+                message="Getting your accompaniment ready…"
+              />
+            </div>
+
+            <!-- Error state -->
+            <div
+              v-else-if="player.previewStemsError"
+              class="absolute inset-0 rounded-xl bg-[var(--color-surface)] border border-[var(--color-danger)]/60 flex flex-col items-center justify-center gap-3 p-4"
+            >
+              <p class="text-[var(--color-danger)] text-sm text-center">
+                {{ player.previewStemsError }}
+              </p>
+              <button
+                @click="() => void player.loadPreviewStems()"
+                class="px-4 py-2 rounded-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[#0a0a0b] text-sm transition-colors"
+              >
+                Retry
+              </button>
+            </div>
+
+            <!-- Ready state: pitch diagram with shift-pending overlay -->
+            <template v-else>
+              <!-- Shift pending overlay on the diagram card only -->
+              <div
+                v-if="shiftPending"
+                class="absolute inset-0 rounded-xl bg-[var(--color-surface)]/85 backdrop-blur-sm flex flex-col items-center justify-center gap-2 z-10"
+              >
+                <svg
+                  class="animate-spin h-6 w-6"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                >
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="#24242a"
+                    stroke-width="3"
+                  />
+                  <path
+                    d="M12 2a10 10 0 0 1 10 10"
+                    stroke="#e8a87c"
+                    stroke-width="3"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                <span class="text-sm text-[var(--color-text-muted)]"
+                  >Tuning to your key…</span
+                >
+              </div>
+              <PitchDiagram
+                v-if="
+                  player.previewStemsReady &&
+                  player.previewMelody &&
+                  audioPlayerRef?.audio
+                "
+                :key="`${player.semitones}-${player.vocalOctaveShift}`"
+                :audio-el="audioPlayerRef.audio!"
+                :melody="player.previewMelody"
+                :vocal-octave-shift="player.vocalOctaveShift"
+                fill
+                class="h-full w-full"
+              />
+              <!-- Placeholder when stems ready but diagram not yet (no melody) -->
+              <div
+                v-else-if="player.previewStemsReady"
+                class="absolute inset-0 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]"
+              />
+            </template>
+          </div>
+
+          <!-- Lyrics card -->
+          <div
+            class="h-32 sm:h-40 shrink-0 overflow-hidden rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]"
+          >
+            <LyricsPanel
+              :lines="lyricsLines"
+              :active-index="lyricsActiveIndex"
+              :plain="lyricsPlain"
+              :available="lyricsAvailable"
+              :loading="lyricsLoading"
+            />
+          </div>
+        </div>
+      </main>
+
+      <!-- Bottom transport with CTA slot -->
+      <AudioPlayer
+        ref="audioPlayerRef"
+        :src="player.audioSrc"
+        :hide-play-button="true"
+        variant="bottom-bar"
+      >
+        <template #cta>
           <button
             @click="onGenerateClick"
             class="w-full px-6 py-3 rounded-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[#0a0a0b] font-medium transition-colors"
           >
             Practice full song →
           </button>
-          <p class="text-[11px] text-[var(--color-text-faint)]">
-            ~90 seconds to prepare
-          </p>
-        </div>
-      </div>
+        </template>
+      </AudioPlayer>
     </template>
   </div>
 </template>
-
-<style scoped>
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 200ms ease-out;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-</style>
