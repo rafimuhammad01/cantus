@@ -227,7 +227,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="h-[100svh] flex flex-col">
+  <div class="min-h-[100svh] flex flex-col">
     <template v-if="!noContext">
       <!-- Slim top bar -->
       <header
@@ -321,7 +321,7 @@ onUnmounted(() => {
       >
         <div class="flex-1 min-h-0 flex flex-col gap-3">
           <!-- PitchDiagram card — stable height regardless of job state -->
-          <div class="relative flex-1 min-h-0">
+          <div class="relative flex-1 min-h-[320px]">
             <!-- Job still running -->
             <div
               v-if="!isDone"

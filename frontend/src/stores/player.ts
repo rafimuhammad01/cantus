@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import {
   previewURL,
   previewShift,
@@ -18,18 +18,44 @@ import { hzToMidi } from "@/utils/pitch";
 
 type PlayerMode = "idle" | "preview" | "preview-shift" | "full";
 
+// Survives page refresh so /preview/:videoId and /play/:videoId/:semitones can
+// rehydrate identity (sig + song metadata) without re-running the search. Scoped
+// to sessionStorage so it auto-clears on tab close — refresh, not "permanent".
+const PERSIST_KEY = "cantus.player.v1";
+
+interface PersistedPlayer {
+  videoId: string;
+  sig: string;
+  song: SearchResult | null;
+  semitones: number;
+  vocalOctaveShift: -12 | 0 | 12;
+}
+
+function loadPersisted(): PersistedPlayer | null {
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(PERSIST_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as PersistedPlayer;
+  } catch {
+    return null;
+  }
+}
+
 export const usePlayerStore = defineStore("player", () => {
+  const persisted = loadPersisted();
+
   // Identity / song metadata
-  const videoId = ref<string>("");
-  const sig = ref<string>("");
-  const song = ref<SearchResult | null>(null);
+  const videoId = ref<string>(persisted?.videoId ?? "");
+  const sig = ref<string>(persisted?.sig ?? "");
+  const song = ref<SearchResult | null>(persisted?.song ?? null);
 
   // Transpose state
-  const semitones = ref(0);
+  const semitones = ref(persisted?.semitones ?? 0);
 
   // Vocal octave shift: -12, 0, or +12 semitones applied only to the displayed
   // target line — instrumental audio is unchanged.
-  const vocalOctaveShift = ref<-12 | 0 | 12>(0);
+  const vocalOctaveShift = ref<-12 | 0 | 12>(persisted?.vocalOctaveShift ?? 0);
 
   // Range of voiced MIDI notes in the active melody, with vocalOctaveShift applied.
   // Prefers previewMelody when in preview/preview-shift mode; falls back to full melody.
@@ -52,9 +78,15 @@ export const usePlayerStore = defineStore("player", () => {
     },
   );
 
-  // Audio source
-  const audioSrc = ref<string>("");
-  const mode = ref<PlayerMode>("idle");
+  // Audio source — rehydrate to the raw preview URL when we have identity from
+  // sessionStorage but no in-memory blob/stem. loadPreviewStems() will swap it
+  // to the cleaner instrumental stem once ready (same as a cold preview load).
+  const audioSrc = ref<string>(
+    persisted?.videoId && persisted?.sig
+      ? previewURL(persisted.videoId, persisted.sig)
+      : "",
+  );
+  const mode = ref<PlayerMode>(persisted?.videoId ? "preview" : "idle");
 
   // Preview key — loaded from /api/preview-key after song selection (no generate needed)
   const previewKey = ref<string>("");
@@ -241,6 +273,27 @@ export const usePlayerStore = defineStore("player", () => {
   function applyStatus(status: JobStatusName, message: string) {
     jobStatus.value = status;
     jobMessage.value = message;
+  }
+
+  if (typeof sessionStorage !== "undefined") {
+    watch(
+      [videoId, sig, song, semitones, vocalOctaveShift],
+      ([v, s, sg, st, vo]) => {
+        if (!v || !s) {
+          sessionStorage.removeItem(PERSIST_KEY);
+          return;
+        }
+        const payload: PersistedPlayer = {
+          videoId: v,
+          sig: s,
+          song: sg,
+          semitones: st,
+          vocalOctaveShift: vo,
+        };
+        sessionStorage.setItem(PERSIST_KEY, JSON.stringify(payload));
+      },
+      { deep: true },
+    );
   }
 
   /** Once the generate completes, load melody (for key + Group 9) and switch audioSrc. */
