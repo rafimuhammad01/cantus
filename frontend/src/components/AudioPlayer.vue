@@ -5,6 +5,18 @@ const props = defineProps<{
   src: string;
   hidePlayButton?: boolean;
   variant?: "default" | "bottom-bar";
+  thumbnailUrl?: string;
+  title?: string;
+  subtitle?: string;
+  badge?: string;
+  // When provided, parent controls play state — icon reflects this value instead
+  // of internal isPlaying. Click emits 'toggle' and skips internal togglePlay().
+  playing?: boolean;
+  // Greys out the play button (e.g. before stems/job are ready).
+  disabled?: boolean;
+}>();
+const emit = defineEmits<{
+  toggle: [];
 }>();
 const slots = useSlots();
 const audio = ref<HTMLAudioElement | null>(null);
@@ -13,6 +25,11 @@ const isPlaying = ref(false);
 const currentTime = ref(0);
 const duration = ref(0);
 
+// Resolved play indicator: prefer parent-controlled `playing` prop when present.
+const effectivePlaying = computed(() =>
+  props.playing !== undefined ? props.playing : isPlaying.value,
+);
+
 function togglePlay() {
   const el = audio.value;
   if (!el) return;
@@ -20,6 +37,15 @@ function togglePlay() {
     el.play().catch(() => {});
   } else {
     el.pause();
+  }
+}
+
+function onPlayButtonClick() {
+  emit("toggle");
+  // When parent owns play state (playing prop is bound), don't also run the
+  // internal toggle — parent's handler drives the audio element directly.
+  if (props.playing === undefined) {
+    togglePlay();
   }
 }
 
@@ -89,42 +115,117 @@ defineExpose({ audio });
     <div
       :class="
         isBottomBar
-          ? 'max-w-4xl mx-auto flex items-center gap-4'
+          ? 'flex flex-wrap items-center gap-3 sm:gap-6 max-w-6xl mx-auto'
           : 'flex items-center gap-3'
       "
     >
+      <!-- Play button -->
       <button
         v-if="!hidePlayButton"
-        @click="togglePlay"
-        class="w-12 h-12 rounded-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] flex items-center justify-center text-[#0a0a0b] text-xl shrink-0 transition-colors"
-        :aria-label="isPlaying ? 'Pause' : 'Play'"
+        @click="onPlayButtonClick"
+        :disabled="disabled"
+        :class="[
+          isBottomBar ? 'w-14 h-14 text-2xl' : 'w-12 h-12 text-xl',
+          'rounded-full flex items-center justify-center shrink-0 transition-colors',
+          disabled
+            ? 'bg-[var(--color-surface-2)] text-[var(--color-text-faint)] cursor-not-allowed'
+            : 'bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[#0a0a0b]',
+        ]"
+        :aria-label="effectivePlaying ? 'Pause' : 'Play'"
       >
-        <span v-if="isPlaying">⏸</span>
+        <span v-if="effectivePlaying">⏸</span>
         <span v-else>▶</span>
       </button>
-      <div class="flex-1 flex items-center gap-3">
-        <span
-          class="text-[12px] tnum text-[var(--color-text-muted)] w-12 text-right"
+
+      <!-- Middle: meta on top, scrubber below (bottom-bar) or just scrubber -->
+      <div
+        :class="
+          isBottomBar
+            ? 'flex-1 min-w-0 flex flex-col gap-1'
+            : 'flex-1 flex items-center gap-3'
+        "
+      >
+        <!-- Song meta row (bottom-bar only) -->
+        <div
+          v-if="isBottomBar && (thumbnailUrl || title)"
+          class="flex items-center gap-3 min-w-0"
         >
-          {{ fmt(currentTime) }}
-        </span>
-        <input
-          type="range"
-          :max="duration || 0"
-          :value="currentTime"
-          step="0.1"
-          @input="onSeek"
-          class="flex-1 accent-[var(--color-accent)]"
-          aria-label="Seek"
-        />
-        <span class="text-[12px] tnum text-[var(--color-text-muted)] w-12">
-          {{ fmt(duration) }}
-        </span>
+          <img
+            v-if="thumbnailUrl"
+            :src="thumbnailUrl"
+            :alt="title"
+            class="w-12 h-12 rounded-md object-cover shrink-0"
+          />
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 min-w-0">
+              <span
+                class="text-[15px] font-medium leading-tight truncate text-[var(--color-text)]"
+              >
+                {{ title }}
+              </span>
+              <span
+                v-if="badge"
+                class="hidden sm:inline-block shrink-0 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text-faint)] text-[11px] px-2 py-0.5 leading-none"
+              >
+                {{ badge }}
+              </span>
+            </div>
+            <div
+              v-if="subtitle"
+              class="text-[12px] text-[var(--color-text-muted)] truncate"
+            >
+              {{ subtitle }}
+            </div>
+          </div>
+        </div>
+
+        <!-- Scrubber: full-width track, time labels below at the edges -->
+        <div v-if="isBottomBar" class="flex flex-col gap-0.5">
+          <input
+            type="range"
+            :max="duration || 0"
+            :value="currentTime"
+            step="0.1"
+            @input="onSeek"
+            class="w-full accent-[var(--color-accent)]"
+            aria-label="Seek"
+          />
+          <div
+            class="flex justify-between text-[11px] tnum text-[var(--color-text-muted)] leading-none"
+          >
+            <span>{{ fmt(currentTime) }}</span>
+            <span>{{ fmt(duration) }}</span>
+          </div>
+        </div>
+        <!-- Default (non-bottom-bar) scrubber row -->
+        <div v-else class="flex items-center gap-3">
+          <span
+            class="text-[12px] tnum text-[var(--color-text-muted)] w-12 text-right"
+          >
+            {{ fmt(currentTime) }}
+          </span>
+          <input
+            type="range"
+            :max="duration || 0"
+            :value="currentTime"
+            step="0.1"
+            @input="onSeek"
+            class="flex-1 accent-[var(--color-accent)]"
+            aria-label="Seek"
+          />
+          <span class="text-[12px] tnum text-[var(--color-text-muted)] w-12">
+            {{ fmt(duration) }}
+          </span>
+        </div>
       </div>
-    </div>
-    <!-- CTA slot: rendered below the scrubber row when provided (Preview only) -->
-    <div v-if="isBottomBar && hasCta" class="max-w-4xl mx-auto mt-2">
-      <slot name="cta" />
+
+      <!-- Right: CTA slot (bottom-bar only). Wraps to its own row on mobile. -->
+      <div
+        v-if="isBottomBar && hasCta"
+        class="order-last w-full flex justify-center sm:order-none sm:w-auto sm:shrink-0 sm:block"
+      >
+        <slot name="cta" />
+      </div>
     </div>
   </div>
 </template>

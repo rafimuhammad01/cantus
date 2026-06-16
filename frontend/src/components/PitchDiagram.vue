@@ -444,6 +444,9 @@ onBeforeUnmount(() => {
   pitchStore.reset();
   resizeObserver?.disconnect();
 });
+
+const isActive = computed(() => pitchDetection.isActive.value);
+defineExpose({ togglePlayAndSing, isActive });
 </script>
 
 <template>
@@ -451,22 +454,8 @@ onBeforeUnmount(() => {
     class="rounded-2xl p-4 bg-[var(--color-surface)] border border-[var(--color-border)] overflow-hidden"
     :class="props.fill ? 'flex flex-col h-full' : ''"
   >
-    <div class="flex items-center justify-between mb-3">
-      <button
-        @click="togglePlayAndSing"
-        class="px-5 py-2 rounded-full text-sm font-medium transition-colors"
-        :class="
-          pitchDetection.isActive.value
-            ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] hover:bg-[var(--color-border)]'
-            : 'bg-[var(--color-accent)] text-[#0a0a0b] hover:bg-[var(--color-accent-hover)]'
-        "
-      >
-        {{ pitchDetection.isActive.value ? "⏸ Pause" : "▶ Play & Sing" }}
-      </button>
-      <span
-        v-if="pitchStore.hitRate !== null"
-        class="text-sm text-[var(--color-text)] tnum"
-      >
+    <div v-if="pitchStore.hitRate !== null" class="flex justify-end mb-3">
+      <span class="text-sm text-[var(--color-text)] tnum">
         Score: {{ Math.round(pitchStore.hitRate * 100) }}%
       </span>
     </div>

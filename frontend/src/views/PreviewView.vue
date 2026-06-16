@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { usePlayerStore } from "@/stores/player";
+import { useSearchStore } from "@/stores/search";
 import { shortKey, transposeKey } from "@/utils/key";
 import { midiToNoteName, hzToMidi } from "@/utils/pitch";
 import KeySelector from "@/components/KeySelector.vue";
@@ -15,7 +16,17 @@ import { useLyrics, type LyricsSongBundle } from "@/composables/useLyrics";
 const route = useRoute();
 const router = useRouter();
 const player = usePlayerStore();
+const search = useSearchStore();
 const audioPlayerRef = ref<InstanceType<typeof AudioPlayer> | null>(null);
+const pitchDiagramRef = ref<InstanceType<typeof PitchDiagram> | null>(null);
+
+const headerQuery = ref("");
+function onHeaderSearch() {
+  const q = headerQuery.value.trim();
+  if (!q) return;
+  void search.runSearch(q);
+  router.push("/");
+}
 
 // Lyrics — currentTimeSec driven by the AudioPlayer's timeupdate event.
 // Preview clip is the first 30s of the song, so currentTime maps 1:1 to song time.
@@ -164,77 +175,39 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-[100svh] flex flex-col">
+  <div class="min-h-[100svh] sm:h-[100svh] flex flex-col">
     <template v-if="!noContext">
-      <!-- Slim top bar -->
+      <!-- Slim top bar: wordmark + search + desktop controls -->
       <header
         class="shrink-0 bg-[var(--color-surface)]/95 backdrop-blur border-b border-[var(--color-border)]"
       >
         <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
           <button
             @click="router.push('/')"
-            class="text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] shrink-0"
-            aria-label="Back to search"
+            class="font-serif italic text-[20px] leading-none text-[var(--color-text)] hover:text-[var(--color-accent)] tracking-tight shrink-0 transition-colors"
+            aria-label="Back to home"
           >
-            ←
+            cantus
           </button>
-          <img
-            v-if="player.song?.thumbnail_url"
-            :src="player.song.thumbnail_url"
-            :alt="player.song.title"
-            class="w-10 h-10 rounded-md object-cover shrink-0"
-          />
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2 min-w-0">
-              <div
-                class="text-[15px] font-medium leading-tight truncate text-[var(--color-text)]"
-              >
-                {{ player.song?.title }}
-              </div>
-              <!-- Preview pill -->
-              <span
-                class="shrink-0 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text-faint)] text-[11px] px-2 py-0.5 leading-none"
-              >
-                Preview · 30s
-              </span>
-            </div>
-            <div class="text-[12px] text-[var(--color-text-muted)] truncate">
-              {{ player.song?.artist
-              }}<template v-if="player.song?.album">
-                · {{ player.song.album }}</template
-              >
-            </div>
-          </div>
-          <!-- Desktop controls -->
-          <div class="hidden md:flex items-end gap-6 shrink-0">
-            <KeySelector
-              :semitones="pendingSemitones"
-              :disabled="!player.previewStemsReady"
-              :original-key="displayKey ? shortKey(displayKey) : undefined"
-              :transposed-key="
-                displayKey
-                  ? shortKey(transposeKey(displayKey, pendingSemitones))
-                  : undefined
-              "
-              @change="onSemitonesChange"
+          <!-- Search pinned to the right -->
+          <form
+            @submit.prevent="onHeaderSearch"
+            class="ml-auto w-48 sm:w-64 max-w-full"
+          >
+            <input
+              v-model="headerQuery"
+              type="search"
+              placeholder="Search another song"
+              autocomplete="off"
+              class="w-full px-4 py-2 text-sm rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:outline-none text-[var(--color-text)] placeholder-[var(--color-text-faint)] transition-all"
             />
-            <VocalOctaveSelector
-              :current="player.vocalOctaveShift"
-              :disabled="!fullVocalRange"
-              :range="
-                fullVocalRange
-                  ? `${midiToNoteName(fullVocalRange.minMidi)} – ${midiToNoteName(fullVocalRange.maxMidi)}`
-                  : undefined
-              "
-              @change="player.setVocalOctaveShift"
-            />
-          </div>
+          </form>
         </div>
       </header>
 
-      <!-- Mobile controls row -->
+      <!-- Controls row: horizontal when there's room, wraps stacked when not -->
       <div
-        class="md:hidden shrink-0 max-w-6xl mx-auto px-4 py-4 flex flex-wrap items-end justify-center gap-4"
+        class="shrink-0 max-w-6xl mx-auto w-full px-4 pt-4 pb-2 flex flex-wrap items-end justify-center gap-4 sm:gap-8"
       >
         <KeySelector
           :semitones="pendingSemitones"
@@ -261,7 +234,7 @@ onUnmounted(() => {
 
       <!-- Main hero area -->
       <main
-        class="flex-1 min-h-0 w-full max-w-6xl mx-auto px-4 pt-4 pb-36 flex flex-col"
+        class="flex-1 min-h-0 w-full max-w-6xl mx-auto px-4 pt-4 pb-44 sm:pb-32 flex flex-col"
       >
         <div class="flex-1 min-h-0 flex flex-col gap-3">
           <!-- PitchDiagram card — stable height regardless of loading state -->
@@ -329,6 +302,7 @@ onUnmounted(() => {
                   player.previewMelody &&
                   audioPlayerRef?.audio
                 "
+                ref="pitchDiagramRef"
                 :key="`${player.semitones}-${player.vocalOctaveShift}`"
                 :audio-el="audioPlayerRef.audio!"
                 :melody="player.previewMelody"
@@ -359,19 +333,28 @@ onUnmounted(() => {
         </div>
       </main>
 
-      <!-- Bottom transport with CTA slot -->
+      <!-- Bottom transport with song meta and CTA slot -->
       <AudioPlayer
         ref="audioPlayerRef"
         :src="player.audioSrc"
-        :hide-play-button="true"
         variant="bottom-bar"
+        :thumbnail-url="player.song?.thumbnail_url"
+        :title="player.song?.title"
+        :subtitle="`${player.song?.artist ?? ''}${player.song?.album ? ' · ' + player.song.album : ''}`"
+        badge="Preview · 30s"
+        :playing="pitchDiagramRef?.isActive ?? false"
+        :disabled="!player.previewStemsReady"
+        @toggle="pitchDiagramRef?.togglePlayAndSing()"
       >
         <template #cta>
           <button
             @click="onGenerateClick"
-            class="w-full px-6 py-3 rounded-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[#0a0a0b] font-medium transition-colors"
+            class="group inline-flex items-center gap-1.5 px-7 py-3 sm:py-2.5 rounded-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[#0a0a0b] text-sm font-medium shadow-lg shadow-[var(--color-accent)]/20 transition-colors"
           >
-            Practice full song →
+            Practice full song
+            <span class="transition-transform group-hover:translate-x-0.5"
+              >→</span
+            >
           </button>
         </template>
       </AudioPlayer>
