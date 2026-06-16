@@ -222,7 +222,7 @@ onUnmounted(() => {
         />
         <VocalOctaveSelector
           :current="player.vocalOctaveShift"
-          :disabled="!fullVocalRange"
+          :disabled="!player.previewStemsReady"
           :range="
             fullVocalRange
               ? `${midiToNoteName(fullVocalRange.minMidi)} – ${midiToNoteName(fullVocalRange.maxMidi)}`
