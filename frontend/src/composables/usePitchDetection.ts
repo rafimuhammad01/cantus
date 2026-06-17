@@ -88,7 +88,7 @@ export function usePitchDetection(): UsePitchDetection {
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true,
+          autoGainControl: false,
         },
       });
     } catch (e) {
