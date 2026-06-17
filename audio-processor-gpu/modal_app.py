@@ -32,7 +32,7 @@ app = modal.App("cantus-audio-processor")
 
 
 @app.cls(
-    gpu="A10G",
+    gpu="L40S",
     image=image,
     volumes={"/models": volume},
     min_containers=0,
