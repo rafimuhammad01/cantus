@@ -1,90 +1,136 @@
-# Deploy
+# Deploy cheatsheet
 
-Cantus deploys manually across three independent tracks. There is no CI/CD.
+Three services ship independently. The Go backend now runs on a dalang.io VPS
+(not EC2 / Docker anymore). The Python GPU service runs on Modal. The frontend
+runs on Cloudflare Pages.
 
-| Track | What | Where | How |
-|---|---|---|---|
-| Frontend | Vue app | Cloudflare Pages | auto on `git push origin master` |
-| Backend | Go API | EC2 (Docker) | buildx → GHCR → ssh + compose pull |
-| GPU service | Python BS-Roformer + CREPE | Modal | `modal deploy` from `audio-processor-gpu/` |
+| Piece | Target | Tool |
+|---|---|---|
+| Go backend | dalang.io VPS (`vps-ac8da96b`) | `go build` + `scp` + `systemctl` |
+| Python GPU service | Modal A10G | `modal deploy` |
+| Frontend | Cloudflare Pages | `git push` |
 
-Storage is Cloudflare R2 (presigned URLs, set `STORAGE_BACKEND=r2` in the EC2 env file).
+Storage is Cloudflare R2 (S3 API). TLS is terminated by dalang's HTTPS edge,
+then forwarded to nginx on port 80 of the VPS, then proxied to the Go backend on
+:8080.
 
-## Track 1 — Frontend (Cloudflare Pages)
+For from-scratch VPS provisioning (system packages, yt-dlp + Deno, nginx vhost,
+systemd unit), see `archive/deploy-vps.md`. This file is the day-to-day cheatsheet.
 
-Auto-deploys on push to `master`. ~1–2 min build.
+---
+
+## Backend (Go) — `vps-ac8da96b`
+
+Build locally, ship the binary, restart the service. **Do not scp directly onto
+`/usr/local/bin/cantus`** — the kernel returns `ETXTBSY` ("text file busy")
+because the running process holds the inode. Always stage in `/tmp` and atomic
+swap via `install`.
 
 ```bash
-git push origin master
+# 1. build locally (linux/amd64 static binary)
+cd backend
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -trimpath -ldflags='-s -w' -o out/cantus ./cmd/server
+file out/cantus   # must say: ELF 64-bit LSB executable, x86-64
+
+# 2. upload to staging path
+dalang scp out/cantus vps-ac8da96b:/tmp/cantus
+# (or whichever transport dalang offers; key constraint is NOT /usr/local/bin/cantus)
+
+# 3. atomic swap + restart
+dalang exec vps-ac8da96b "install -m 755 /tmp/cantus /usr/local/bin/cantus && systemctl restart cantus-backend && rm /tmp/cantus && sleep 2 && systemctl is-active cantus-backend && curl -fsS http://localhost:8080/health"
 ```
 
-CF Pages watches `frontend/` and runs the build. No further action.
+Expected tail: `active` then `{"status":"ok"}`.
 
-## Track 2 — Backend (EC2 via GHCR)
-
-EC2 host: `54.169.205.65`
-SSH key: `~/Downloads/cantus-backend.pem`
-Public URL: `https://54-169-205-65.sslip.io` (sslip.io DNS + Caddy + Let's Encrypt, auto-renewed)
-Image: `ghcr.io/rafimuhammad01/cantus-backend:latest`
-Compose: `/opt/cantus/docker-compose.yml`
-Env file: `/opt/cantus/backend/.env`
-
-### Steps
-
-1. **Docker Desktop must be running locally** (buildx uses it). If `docker ps` errors on the socket, start Docker Desktop first.
-
-2. **Build + push linux/amd64 image** — EC2 is amd64; an M-series Mac default build would push arm64 and fail to start.
-
-   ```bash
-   cd backend && docker buildx build --platform linux/amd64 \
-     -t ghcr.io/rafimuhammad01/cantus-backend:latest --push .
-   ```
-
-   Requires prior `docker login ghcr.io`. The `cantus-builder` buildx context is preconfigured.
-
-3. **Pull + recreate on EC2:**
-
-   ```bash
-   ssh -i ~/Downloads/cantus-backend.pem ec2-user@54.169.205.65 \
-     "cd /opt/cantus && sudo docker compose pull backend && sudo docker compose up -d backend"
-   ```
-
-4. **Verify:**
-
-   ```bash
-   curl -fsS https://54-169-205-65.sslip.io/health   # expect {"status":"ok"}
-   ```
-
-   Inside EC2:
-
-   ```bash
-   sudo docker compose -f /opt/cantus/docker-compose.yml logs --tail 5 backend
-   ```
-
-   Look for `"backend listening"` on port 8080 with no fatals.
-
-## Track 3 — GPU service (Modal)
-
-Deployed separately, not part of the backend flow. From `audio-processor-gpu/`:
+Tail logs:
 
 ```bash
+dalang exec vps-ac8da96b "journalctl -u cantus-backend -n 50 --no-pager"
+```
+
+---
+
+## Audio processor (Python) — Modal
+
+```bash
+cd audio-processor-gpu
 modal deploy modal_app.py
 ```
 
-Modal prints a stable URL. If it changes (rare), update `PROCESSOR_URL` in `/opt/cantus/backend/.env` on EC2 and restart the backend.
+Note the printed `https://*.modal.run` URL. If it changes (e.g. on first
+deploy or after rename), update the VPS:
 
-The BS-Roformer checkpoint is seeded once into the Modal Volume via:
+```bash
+dalang exec vps-ac8da96b "sed -i 's|^PROCESSOR_URL=.*|PROCESSOR_URL=<new-url>|' /opt/cantus/backend.env && systemctl restart cantus-backend"
+```
+
+Verify the URL is on a single line (no embedded newline — that silently makes
+the backend fall back to `localhost:8090`):
+
+```bash
+dalang exec vps-ac8da96b "grep PROCESSOR_URL /opt/cantus/backend.env | cat -A"
+# only one trailing $ allowed
+```
+
+Model seeding (one-time, when BS-Roformer ckpt isn't in the Modal Volume yet):
 
 ```bash
 modal run seed_models.py
 ```
 
-Subsequent cold starts read from the Volume (~5–10s).
+---
+
+## Frontend — Cloudflare Pages
+
+```bash
+git push origin master
+```
+
+CF Pages auto-builds from `frontend/` on push. ~1-2 min. No further action.
+Vue + Vite, output dir `frontend/dist`.
+
+---
+
+## Deploy everything
+
+When asked to "deploy" without qualification, the order is:
+
+1. **Audio processor** (Modal) — if Python code or `modal_app.py` changed.
+   New URL? Update VPS env first.
+2. **Backend** (VPS) — if Go code changed.
+3. **Frontend** (CF Pages) — `git push origin master` (also pushes any
+   backend/audio-processor commits to remote; doesn't trigger their deploys
+   though, those are manual above).
+
+Check what changed first:
+
+```bash
+git status
+git log --oneline origin/master..HEAD
+```
+
+Then deploy only the affected pieces. If unclear which piece a commit touched,
+the path tells you: `backend/` → VPS, `audio-processor-gpu/` → Modal,
+`frontend/` → CF Pages.
+
+---
 
 ## Gotchas
 
-- **Don't run `--help` against the running container** to "sanity check" — it tries to bind :8080 and fails with `address already in use`. Misleading red herring; use `/health` instead.
-- **No `curl`/`wget`/`nc` in the container.** Probe via the host or the sslip.io URL.
-- **New env vars** must be added to `/opt/cantus/backend/.env` on EC2 *before* pulling, or the container will fail to start. Diff for new `os.Getenv` calls before deploying.
-- **YouTube cookies** live at `/opt/cantus/secrets/youtube-cookies.txt` on EC2 and are mounted into the container; refresh them when yt-dlp starts failing with bot-check errors.
-- **Caddy** auto-renews TLS; no manual cert work.
+- **Text file busy** on backend upload: stage in `/tmp/cantus`, then `install`. Never overwrite `/usr/local/bin/cantus` directly.
+- **`status=203/EXEC`** from systemd: binary architecture mismatch (built on Mac without `GOOS=linux GOARCH=amd64`) or missing `chmod 755`. Verify with `file /usr/local/bin/cantus` on the VPS — must say `ELF 64-bit ... x86-64`.
+- **`PROCESSOR_URL` line wrap**: stray newline → falls back to `localhost:8090` → every `/api/preview-stems` and `/api/generate` returns 502.
+- **30s dalang idle timeout**: any new long-running sync handler must emit keepalive bytes (see `preview_stems.go` pattern) or use async/SSE.
+- **Modal URL changes** on first deploy or rename: re-paste into VPS env + restart.
+- **CF Pages doesn't deploy backend or Modal** — those are two separate manual steps.
+
+---
+
+## What is deliberately deferred
+
+- Cloudflare Turnstile + WAF rate limits.
+- Session-bound HMAC sig payload.
+- R2 LRU eviction (relying on bucket lifecycle policy).
+
+These are anti-abuse hardening; layer them on after the happy path is stable.
