@@ -171,7 +171,7 @@ export async function getPreviewKey(
 
 /**
  * POST /api/preview-stems — triggers Demucs + CREPE on the 30s clip.
- * Blocks ~14s until all stems and melody.json are cached. Idempotent.
+ * Streams a keepalive-padded response; final body is {"ready":true} or {"error":"..."}.
  */
 export async function triggerPreviewStems(
   videoId: string,
@@ -182,8 +182,11 @@ export async function triggerPreviewStems(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ video_id: videoId, sig }),
   });
-  await checkOk(resp);
-  // Body is { "ready": true } — we only need the 200 OK.
+  await checkOk(resp); // handles 4xx/5xx from validation phase
+  const text = await resp.text(); // may include leading whitespace keepalive bytes
+  const data = JSON.parse(text);
+  if (data.error) throw new Error(`preview-stems failed: ${data.error}`);
+  // data.ready === true
 }
 
 /**
