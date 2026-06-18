@@ -256,6 +256,7 @@ export const usePlayerStore = defineStore("player", () => {
 
   /** Fire-and-forget /api/prewarm. No UI state — purely a background optimization. */
   function startPrewarm(vid: string, s: string): void {
+    if (!vid || !s) return;
     void apiPrewarm(vid, s).catch(() => {
       // Non-fatal — prewarm is an optimization; generate will run the full pipeline.
     });
