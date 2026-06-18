@@ -14,6 +14,7 @@ import ProcessingStatus from "@/components/ProcessingStatus.vue";
 import PitchDiagram from "@/components/PitchDiagram.vue";
 import LyricsPanel from "@/components/LyricsPanel.vue";
 import { useLyrics, type LyricsSongBundle } from "@/composables/useLyrics";
+import { retryPolicy } from "@/lib/retryPolicy";
 
 const route = useRoute();
 const router = useRouter();
@@ -32,6 +33,11 @@ function onHeaderSearch() {
 }
 
 const NAV_DEBOUNCE_MS = 600;
+
+// Auto-retry state for transient generate / SSE-disconnect failures.
+const autoRetryCount = ref(0);
+const autoRetryExhausted = ref(false);
+let autoRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Lyrics — currentTimeSec driven by the AudioPlayer's timeupdate event.
 const currentTimeSec = ref(0);
@@ -139,6 +145,78 @@ function startSSE() {
   });
 }
 
+/**
+ * scheduleAutoRetry fires a generate retry after exponential backoff.
+ * After retryPolicy.maxAttempts retries are exhausted it sets autoRetryExhausted
+ * so the UI can show a manual Retry button.
+ */
+function scheduleAutoRetry() {
+  if (autoRetryExhausted.value) return;
+  if (autoRetryCount.value >= retryPolicy.maxAttempts) {
+    autoRetryExhausted.value = true;
+    return;
+  }
+  const delay = retryPolicy.backoffMs * Math.pow(2, autoRetryCount.value);
+  autoRetryCount.value++;
+  autoRetryTimer = setTimeout(async () => {
+    autoRetryTimer = null;
+    player.jobStatus = "queued";
+    player.jobMessage = "";
+    sse.close();
+    try {
+      await player.startGenerate();
+      startSSE();
+    } catch {
+      scheduleAutoRetry();
+    }
+  }, delay);
+}
+
+/** Manual retry — resets the exhaustion counter so the user gets fresh attempts. */
+function onManualRetry() {
+  autoRetryCount.value = 0;
+  autoRetryExhausted.value = false;
+  player.jobStatus = "queued";
+  player.jobMessage = "";
+  sse.close();
+  void (async () => {
+    try {
+      await player.startGenerate();
+      startSSE();
+    } catch (e) {
+      player.applyStatus("error", String(e));
+    }
+  })();
+}
+
+// Watch sse.error: if the job hasn't finished, treat it as a transient disconnect
+// and feed into the auto-retry policy.
+watch(
+  () => sse.error.value,
+  (err) => {
+    if (!err) return;
+    if (player.jobStatus === "done" || player.jobStatus === "error") return;
+    scheduleAutoRetry();
+  },
+);
+
+// Watch player.jobStatus: if the SSE reports an error from the server, also
+// trigger auto-retry (server-side pipeline error, not just a connection drop).
+watch(
+  () => player.jobStatus,
+  (next, prev) => {
+    if (next === "done") {
+      // Reset retry counters on success.
+      autoRetryCount.value = 0;
+      autoRetryExhausted.value = false;
+      void loadDoneArtifacts();
+    }
+    if (next === "error" && prev !== "error") {
+      scheduleAutoRetry();
+    }
+  },
+);
+
 // On semitone change via the pill, update pending value immediately and
 // debounce the URL navigation so rapid clicks collapse into one nav.
 function onSemitonesChange(n: number) {
@@ -153,16 +231,6 @@ function onSemitonesChange(n: number) {
   }, NAV_DEBOUNCE_MS);
 }
 
-// Watch jobStatus → done: load melody once.
-watch(
-  () => player.jobStatus,
-  async (next) => {
-    if (next === "done") {
-      await loadDoneArtifacts();
-    }
-  },
-);
-
 // On route param change (user transposed → URL changed), kick a new generate.
 watch(routeSemitones, async (next) => {
   if (noContext.value) return;
@@ -174,6 +242,13 @@ watch(routeSemitones, async (next) => {
   sse.close();
   player.jobStatus = "idle";
   player.jobMessage = "";
+  // Reset retry state for new generate attempt.
+  autoRetryCount.value = 0;
+  autoRetryExhausted.value = false;
+  if (autoRetryTimer !== null) {
+    clearTimeout(autoRetryTimer);
+    autoRetryTimer = null;
+  }
   // Clear stale melody — PitchDiagram captures props.melody at setup, so if it
   // mounts with a melody from a previous semitones value, the target line stays
   // wrong even after loadDoneArtifacts replaces player.melody. Forcing null gates
@@ -234,6 +309,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (navTimer !== null) clearTimeout(navTimer);
+  if (autoRetryTimer !== null) clearTimeout(autoRetryTimer);
 });
 </script>
 
@@ -310,15 +386,23 @@ onUnmounted(() => {
         <div class="flex-1 min-h-0 flex flex-col gap-3">
           <!-- PitchDiagram card — stable height regardless of job state -->
           <div class="relative flex-1 min-h-[320px]">
-            <!-- Job still running -->
+            <!-- Job still running or errored -->
             <div
               v-if="!isDone"
-              class="absolute inset-0 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-center"
+              class="absolute inset-0 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] flex flex-col items-center justify-center gap-3"
             >
               <ProcessingStatus
                 :status="player.jobStatus"
                 :message="player.jobMessage"
               />
+              <!-- Manual retry button: shown only after auto-retries are exhausted -->
+              <button
+                v-if="autoRetryExhausted"
+                @click="onManualRetry"
+                class="mt-2 px-4 py-2 rounded-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[#0a0a0b] text-sm transition-colors"
+              >
+                Retry
+              </button>
             </div>
             <!-- Done + melody loaded -->
             <PitchDiagram

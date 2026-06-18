@@ -42,15 +42,22 @@ func Status(jobStore *services.JobStore) http.HandlerFunc {
 			return
 		}
 
-		ticker := time.NewTicker(300 * time.Millisecond)
-		defer ticker.Stop()
+		pollTicker := time.NewTicker(300 * time.Millisecond)
+		defer pollTicker.Stop()
+		heartbeatTicker := time.NewTicker(15 * time.Second)
+		defer heartbeatTicker.Stop()
 		lastStatus := job.Status
 
 		for {
 			select {
 			case <-r.Context().Done():
 				return
-			case <-ticker.C:
+			case <-heartbeatTicker.C:
+				// SSE comment line — keeps the connection alive through proxies and
+				// the dalang edge, which kills idle connections after ~30s.
+				_, _ = fmt.Fprint(w, ": keepalive\n\n")
+				flusher.Flush()
+			case <-pollTicker.C:
 				current, ok := jobStore.Get(jobID)
 				if !ok {
 					return

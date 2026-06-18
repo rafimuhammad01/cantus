@@ -116,7 +116,7 @@ func stemsRouter(
 	transcode services.TranscodeFunc,
 ) *chi.Mux {
 	r := chi.NewRouter()
-	r.Post("/api/preview-stems", handlers.PreviewStems(signer, storage, yt, processor, transcode, services.NewVideoFailureTracker()))
+	r.Post("/api/preview-stems", handlers.PreviewStems(signer, storage, yt, processor, transcode, services.NewVideoFailureTracker(), nil))
 	return r
 }
 
@@ -377,7 +377,8 @@ func TestPreviewStemsHandler(t *testing.T) {
 			},
 			wantStatus:       http.StatusOK,
 			wantBodyContains: "transcode failed",
-			wantTranscode:    1,
+			// Transcode is now wrapped in Retry(PipelineRetryAttempts=3), so all 3 attempts fire.
+			wantTranscode: services.PipelineRetryAttempts,
 		},
 		{
 			name: "200 streaming — Melody failure",

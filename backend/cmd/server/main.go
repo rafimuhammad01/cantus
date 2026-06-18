@@ -89,8 +89,9 @@ func main() {
 
 	lrclibClient := services.NewLRCLibClient("")
 	previewFailures := services.NewVideoFailureTracker()
+	previewCoord := services.NewPreviewCoordinator()
 
-	r := api.NewRouter(origins, log, svc, signer, storage, processor, shifter, jobRunner, jobStore, blobTokener, lrclibClient, previewFailures)
+	r := api.NewRouter(origins, log, svc, signer, storage, processor, shifter, jobRunner, jobStore, blobTokener, lrclibClient, previewFailures, previewCoord)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),

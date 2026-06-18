@@ -6,9 +6,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"cantus/backend/models"
 )
+
+// DownloadStallTimeout is the maximum duration without any new bytes written
+// to the output file before the download is considered stalled and cancelled.
+// The existing Retry wrapper will then retry the cancelled attempt.
+const DownloadStallTimeout = 30 * time.Second
 
 // CommandRunner abstracts external command execution for testability.
 type CommandRunner interface {
@@ -71,6 +77,51 @@ func (s *PythonYouTubeService) Search(ctx context.Context, query string, limit, 
 	return s.search.Search(ctx, query, limit, offset)
 }
 
+// runWithStallDetector runs the command via s.runner but cancels outCtx if outPath
+// shows no growth for DownloadStallTimeout. This prevents silent hangs on slow or
+// throttled connections; the Retry wrapper in the caller will retry the cancelled attempt.
+func (s *PythonYouTubeService) runWithStallDetector(ctx context.Context, outPath, name string, args ...string) error {
+	stallCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- s.runner.Run(stallCtx, name, args...)
+	}()
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	var lastSize int64 = -1
+	var lastChange = time.Now()
+
+	for {
+		select {
+		case err := <-done:
+			return err
+		case <-ticker.C:
+			info, statErr := os.Stat(outPath)
+			if statErr != nil {
+				// File not created yet — reset the stall clock as long as the
+				// command is still starting up (within DownloadStallTimeout).
+				if time.Since(lastChange) >= DownloadStallTimeout {
+					cancel()
+					return fmt.Errorf("download stalled: no output file after %s", DownloadStallTimeout)
+				}
+				continue
+			}
+			size := info.Size()
+			if size != lastSize {
+				lastSize = size
+				lastChange = time.Now()
+			} else if time.Since(lastChange) >= DownloadStallTimeout {
+				cancel()
+				return fmt.Errorf("download stalled: no progress for %s", DownloadStallTimeout)
+			}
+		}
+	}
+}
+
 // DownloadPreview downloads the first 30 seconds of audio for videoID via yt-dlp
 // and commits it to storage under the name "preview.mp3". It returns an error if
 // videoID is invalid, yt-dlp fails, or storage.Commit fails.
@@ -100,7 +151,7 @@ func (s *PythonYouTubeService) DownloadPreview(ctx context.Context, videoID stri
 		"https://youtu.be/" + videoID,
 	}...)
 
-	if err := s.runner.Run(ctx, "yt-dlp", args...); err != nil {
+	if err := s.runWithStallDetector(ctx, outPath, "yt-dlp", args...); err != nil {
 		return fmt.Errorf("download preview: yt-dlp: %w", err)
 	}
 
@@ -139,7 +190,7 @@ func (s *PythonYouTubeService) DownloadFull(ctx context.Context, videoID string)
 		"https://youtu.be/" + videoID,
 	}...)
 
-	if err := s.runner.Run(ctx, "yt-dlp", args...); err != nil {
+	if err := s.runWithStallDetector(ctx, outPath, "yt-dlp", args...); err != nil {
 		return fmt.Errorf("download full: yt-dlp: %w", err)
 	}
 

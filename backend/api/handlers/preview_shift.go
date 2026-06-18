@@ -23,7 +23,7 @@ type previewShiftRequest struct {
 
 // shiftViaStorage downloads inKey to scratch, runs shifter, commits scratch out to outKey,
 // then verifies. inExt and outExt determine the tempfile extensions so Shifter's MP3↔WAV
-// dispatch picks the right pipeline.
+// dispatch picks the right pipeline. Returns early if outKey is already cached.
 func shiftViaStorage(
 	ctx context.Context,
 	storage services.Storage,
@@ -32,6 +32,15 @@ func shiftViaStorage(
 	inExt, outExt string,
 	semitones float64,
 ) error {
+	// Cache check — skip the whole pipeline if the output is already present.
+	has, err := storage.Has(ctx, outKey)
+	if err != nil {
+		return fmt.Errorf("cache check: %w", err)
+	}
+	if has {
+		return nil
+	}
+
 	rc, err := storage.Open(ctx, inKey)
 	if err != nil {
 		return fmt.Errorf("open input: %w", err)
@@ -56,7 +65,9 @@ func shiftViaStorage(
 	_ = scratchOut.Close()
 	defer func() { _ = os.Remove(scratchOut.Name()) }()
 
-	if err := shifter.Shift(ctx, scratchIn.Name(), scratchOut.Name(), semitones); err != nil {
+	if err := services.Retry(ctx, services.PipelineRetryAttempts, services.PipelineRetryBaseDelay, func() error {
+		return shifter.Shift(ctx, scratchIn.Name(), scratchOut.Name(), semitones)
+	}); err != nil {
 		return fmt.Errorf("shift: %w", err)
 	}
 	if err := storage.Commit(ctx, outKey, scratchOut.Name()); err != nil {
@@ -74,6 +85,7 @@ func PreviewShift(
 	storage services.Storage,
 	ytSvc services.YouTubeService,
 	shifter services.Shifter,
+	coord *services.PreviewCoordinator,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req previewShiftRequest
@@ -140,8 +152,19 @@ func PreviewShift(
 				// Stem path: shift the clean instrumental stem locally.
 				inKey := storage.Key(videoID, "preview-stems/no_vocals.wav")
 				outKey := storage.Key(videoID, stemShiftedName)
-				if err := shiftViaStorage(ctx, storage, shifter, inKey, outKey, ".wav", ".mp3", float64(n)); err != nil {
-					log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("stem-shift failed")
+				doShift := func() error {
+					return shiftViaStorage(ctx, storage, shifter, inKey, outKey, ".wav", ".mp3", float64(n))
+				}
+				var shiftErr error
+				if coord != nil {
+					shiftErr = coord.RunPreviewShift(ctx, videoID, n, func(_ context.Context) error {
+						return doShift()
+					})
+				} else {
+					shiftErr = doShift()
+				}
+				if shiftErr != nil {
+					log.Error().Err(shiftErr).Str("videoId", videoID).Int("semitones", n).Msg("stem-shift failed")
 					writeJSON(w, http.StatusBadGateway, errorResponse{Error: "shift failed"})
 					return
 				}
@@ -181,8 +204,22 @@ func PreviewShift(
 
 			inKey := storage.Key(videoID, "preview.mp3")
 			outKey := storage.Key(videoID, legacyShiftedName)
-			if err := shiftViaStorage(ctx, storage, shifter, inKey, outKey, ".mp3", ".mp3", float64(n)); err != nil {
-				log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("legacy-shift failed")
+			// Use a negated semitone value as the dedup key to distinguish from the
+			// stem shift path (they produce different outputs for the same videoID+n).
+			legacyKey := -(n + 13)
+			doLegacyShift := func() error {
+				return shiftViaStorage(ctx, storage, shifter, inKey, outKey, ".mp3", ".mp3", float64(n))
+			}
+			var legacyShiftErr error
+			if coord != nil {
+				legacyShiftErr = coord.RunPreviewShift(ctx, videoID, legacyKey, func(_ context.Context) error {
+					return doLegacyShift()
+				})
+			} else {
+				legacyShiftErr = doLegacyShift()
+			}
+			if legacyShiftErr != nil {
+				log.Error().Err(legacyShiftErr).Str("videoId", videoID).Int("semitones", n).Msg("legacy-shift failed")
 				writeJSON(w, http.StatusBadGateway, errorResponse{Error: "shift failed"})
 				return
 			}

@@ -138,7 +138,9 @@ func runPreviewStemsHelper(
 
 		tmpMp3 := filepath.Join(tmpDir, "no_vocals.mp3")
 
-		if err := transcode(ctx, tmpWav, tmpMp3); err != nil {
+		if err := services.Retry(ctx, services.PipelineRetryAttempts, services.PipelineRetryBaseDelay, func() error {
+			return transcode(ctx, tmpWav, tmpMp3)
+		}); err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Msg("transcode (no_vocals.mp3) failed")
 			return "transcode failed", err
 		}
@@ -192,6 +194,7 @@ func PreviewStems(
 	processor services.ProcessorClient,
 	transcode services.TranscodeFunc,
 	failures *services.VideoFailureTracker,
+	coord *services.PreviewCoordinator,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req previewStemsRequest
@@ -257,7 +260,19 @@ func PreviewStems(
 		}
 		done := make(chan result, 1)
 		go func() {
-			msg, err := runPreviewStemsHelper(ctx, log, videoID, storage, ytSvc, processor, transcode, failures, mp3Has, melodyHas)
+			var msg string
+			var err error
+			if coord != nil {
+				err = coord.RunPreviewStems(ctx, videoID, func(innerCtx context.Context) error {
+					msg, err = runPreviewStemsHelper(innerCtx, log, videoID, storage, ytSvc, processor, transcode, failures, mp3Has, melodyHas)
+					return err
+				})
+				if err != nil && msg == "" {
+					msg = err.Error()
+				}
+			} else {
+				msg, err = runPreviewStemsHelper(ctx, log, videoID, storage, ytSvc, processor, transcode, failures, mp3Has, melodyHas)
+			}
 			done <- result{msg, err}
 		}()
 

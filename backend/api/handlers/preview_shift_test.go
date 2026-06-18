@@ -70,7 +70,7 @@ func newErrStorage(t *testing.T, errOnName string) *errStorage {
 // shiftRouter wires a chi router with the PreviewShift handler at /api/preview-shift.
 func shiftRouter(signer *services.Signer, storage services.Storage, yt services.YouTubeService, shifter services.Shifter) *chi.Mux {
 	r := chi.NewRouter()
-	r.Post("/api/preview-shift", handlers.PreviewShift(signer, storage, yt, shifter))
+	r.Post("/api/preview-shift", handlers.PreviewShift(signer, storage, yt, shifter, nil))
 	return r
 }
 
@@ -335,7 +335,8 @@ func TestPreviewShiftHandler(t *testing.T) {
 			wantStatus:         http.StatusBadGateway,
 			wantBodyContains:   "shift failed",
 			wantDownloadCalled: 0,
-			wantShiftCalled:    1,
+			// Shift is now wrapped in Retry(PipelineRetryAttempts=3), so all 3 attempts fire.
+			wantShiftCalled:    services.PipelineRetryAttempts,
 			wantShiftSemitones: -2.0,
 		},
 

@@ -15,6 +15,7 @@ import {
   type MelodyResponse,
   type JobStatusName,
 } from "@/services/api";
+import { withRetry } from "@/lib/retryPolicy";
 import { hzToMidi } from "@/utils/pitch";
 
 type PlayerMode = "idle" | "preview" | "preview-shift" | "full";
@@ -218,16 +219,15 @@ export const usePlayerStore = defineStore("player", () => {
     if (previewStemsLoading.value) return; // in-flight; let it complete
     previewStemsLoading.value = true;
     previewStemsError.value = "";
+    // Capture current videoId/sig in case the song changes mid-flight.
+    const vid = videoId.value;
+    const s = sig.value;
     try {
-      await triggerPreviewStems(videoId.value, sig.value);
+      await withRetry(() => triggerPreviewStems(vid, s));
       // Fetch melody at the current semitones (usually 0 on first load)
-      previewMelody.value = await getPreviewMelody(
-        videoId.value,
-        sig.value,
-        semitones.value,
-      );
+      previewMelody.value = await getPreviewMelody(vid, s, semitones.value);
       // Swap audio source from the legacy fast preview to the clean stem
-      setAudioSrc(previewAudioURL(videoId.value, sig.value));
+      setAudioSrc(previewAudioURL(vid, s));
       mode.value = "preview";
       previewStemsReady.value = true;
     } catch (e) {
