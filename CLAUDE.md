@@ -76,13 +76,20 @@ Three-stage pipeline — users iterate on the fast preview, then commit to the s
 
 | Endpoint | Speed | Purpose |
 |---|---|---|
+| `GET /health` | instant | Liveness probe; returns `{"status":"ok"}` |
 | `GET /api/songs/search?q=` | ~1-2s | in-Go YouTube Music song-entity search; returns `{videoId, sig, title, artist, album, ...}` |
-| `GET /api/preview/:videoId?sig=` | ~5s cold / instant warm | 30s clip, original key |
-| `POST /api/preview-shift` `{ video_id, sig, semitones }` | ~1-2s cold / instant warm | 30s clip, shifted key |
-| `POST /api/generate` `{ video_id, sig, semitones }` | 90-180s cold / faster with stem cache | Full pipeline, returns job_id |
+| `GET /api/preview/:videoId?sig=` | ~5s cold / instant warm | 30s clip, original key, WITH vocals |
+| `GET /api/preview-key/:videoId?sig=` | instant (cached) | Song key from full-pipeline `melody.json`; returns `{"key":""}` until generate has run |
+| `POST /api/preview-shift` `{ video_id, sig, semitones }` | ~1-2s cold / instant warm | 30s clip, shifted key, WITH vocals |
+| `POST /api/preview-stems` `{ video_id, sig }` | ~30-60s cold / instant warm | Run BS-Roformer + CREPE on 30s clip; produces clean instrumental + melody for preview; returns `{ready:true}` |
+| `GET /api/preview-audio/:videoId?sig=` | instant (cached) | 30s clean instrumental MP3 (original key); requires preview-stems to have run |
+| `GET /api/preview-melody/:videoId/:semitones?sig=` | instant (cached) | Math-transposed melody from preview-stems pipeline |
+| `POST /api/prewarm` `{ video_id, sig }` | returns immediately (202) | Fire-and-forget: runs stages 1–3 (download + separate + melody) in background; returns `{job_id}`; frontend calls on PreviewView mount |
+| `POST /api/generate` `{ video_id, sig, semitones }` | 90-180s cold / fast if prewarm ran | Full pipeline, returns `{job_id}`; awaits in-flight prewarm then runs shift |
 | `GET /api/status/:jobId` | SSE stream | Pipeline progress (jobId is server-issued, no sig needed) |
 | `GET /api/audio/:videoId/:semitones?sig=` | instant (cached) | Full instrumental MP3 |
-| `GET /api/melody/:videoId/:semitones?sig=` | instant (cached) | melody.json for pitch display |
+| `GET /api/melody/:videoId/:semitones?sig=` | instant (cached) | melody.json for pitch display, math-transposed to requested semitones |
+| `GET /api/lyrics/:videoId?lyrics_sig=&title=&artist=&album=&duration_sec=` | ~1s / instant warm | Timed lyrics from LRCLIB; cached; returns `{available:false}` on miss |
 
 ## Go Module
 
@@ -97,9 +104,12 @@ Module path: `cantus/backend`
 - **HMAC sig flow**: `/api/songs/search` returns `{videoId, sig}`; frontend stores both and passes `sig` on every audio call. Handlers use constant-time compare (`hmac.Equal`). Rotating `VIDEO_ID_SIGNING_KEY` invalidates outstanding sigs — users would need to re-search; acceptable.
 - **CREPE runs on isolated vocals** (BS-Roformer output), NOT the full mix — CREPE is monophonic and would track bass/guitar on a full mix.
 - **Semitones capped at ±12** (one octave) — covers practical singing range needs (e.g., A → D = -7 semitones). Original conservative cap of ±5 assumed full-mix shifting; since the full-song path now shifts BS-Roformer-isolated instrumental (no vocals → no formant problem), `CLIShifter` (rubberband) can handle ±12 with only mild artifacts. Beyond ±12 the music genuinely starts sounding wrong; keep the bound.
-- **Cache is permanent**: files under `tmp/cache/` are kept indefinitely. `Storage.Has()` returns true iff the file exists AND is non-zero size (zero-byte = corrupt → regenerate). Rationale: re-running BS-Roformer/CREPE on GPU is far more expensive than storage. Phase 2 (cloud R2) will add LRU eviction once we approach the 10GB free tier; until then, simplicity wins.
-- **Concurrent generate jobs dedup by videoID**: `JobRunner.Submit(videoID, semitones)` uses a `sync.Map` keyed by videoID. A second Submit for the same videoID while a job is in flight returns the existing jobID — never spawns a duplicate pipeline. Different semitones for the same videoID also dedup at this layer; the cheap Shift stage just runs again from cache once Separate is done.
+- **Cache is permanent**: files under `tmp/cache/` are kept indefinitely. `LocalDiskStorage` has no TTL enforcement and no cleanup goroutine. `Storage.Has()` returns true iff the file exists AND is non-zero size (zero-byte = corrupt → regenerate). Rationale: re-running BS-Roformer/CREPE on GPU is far more expensive than storage. Cloud deployment uses R2 with a bucket lifecycle policy for eventual eviction.
+- **Two dedup maps in JobRunner**: `prewarmInflight` keyed by `videoID` (for `SubmitPrewarm`), and `shiftInflight` keyed by `videoID|semitones` (for `Submit`). A `Submit` call awaits an in-flight prewarm via a `done` channel before running stage 4. Different semitones for the same videoID each get their own shift job (no dedup across semitones).
 - **JobStore record TTL is separate (1h)** — that cleanup applies to in-memory job status records, not cache files.
+- **VideoFailureTracker** — per-videoID circuit breaker in `services/job_runner.go`. After `maxFailuresPerVideo=3` consecutive failures, the videoID is blocked for `failureCooldown=30min`. Both `SubmitPrewarm` and `Submit` call `IsBlocked` before doing any work and short-circuit to a `StatusError` job. The `PreviewStems` handler has its own independent tracker instance (passed via `NewRouter`).
+- **Per-stage retry** — every external/IO call in the pipeline (download, separate, melody, shift, and the same three in preview-stems) is wrapped with `Retry(ctx, PipelineRetryAttempts=3, PipelineRetryBaseDelay=2s, ...)` with exponential backoff. Constants live in `services/job_runner.go`.
+- **Prewarm trigger** — `PreviewView.vue` fires `POST /api/prewarm` via `player.startPrewarm` inside `onMounted` as fire-and-forget (non-fatal on error). This means stages 1–3 (download + separate + melody) are running in the background while the user picks their key; when they click "Practice Full Song", `generate` only has to run the cheap shift stage.
 - **tmp/ dirs**: gitignored. `tmp/cache/` holds the permanent cache; other `tmp/` files are scratch working space.
 - **YouTubeService interface** in `backend/services/youtube.go`: swap yt-dlp for a licensed provider without touching handler code.
 - **ProcessorClient** in `backend/services/processor_url.go`: single URL-based client that talks to the Python GPU service for Separate (BS-Roformer) and Melody (CREPE). Configured via `PROCESSOR_URL` (defaults to `PYTHON_PROCESSOR_URL`).

@@ -33,6 +33,10 @@ func (f *fakeRunner) Submit(videoID string, semitones int) string {
 	return f.returnID
 }
 
+func (f *fakeRunner) SubmitPrewarm(_ string) string {
+	return "fake-prewarm-id-deadbeef"
+}
+
 // generateRouter wires a chi router with the Generate handler at POST /api/generate.
 func generateRouter(signer *services.Signer, runner services.JobSubmitter) *chi.Mux {
 	r := chi.NewRouter()

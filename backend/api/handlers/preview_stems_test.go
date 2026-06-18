@@ -116,7 +116,7 @@ func stemsRouter(
 	transcode services.TranscodeFunc,
 ) *chi.Mux {
 	r := chi.NewRouter()
-	r.Post("/api/preview-stems", handlers.PreviewStems(signer, storage, yt, processor, transcode))
+	r.Post("/api/preview-stems", handlers.PreviewStems(signer, storage, yt, processor, transcode, services.NewVideoFailureTracker()))
 	return r
 }
 
@@ -349,7 +349,7 @@ func TestPreviewStemsHandler(t *testing.T) {
 			},
 			wantStatus:       http.StatusBadGateway,
 			wantBodyContains: "download failed",
-			wantDownload:     1,
+			wantDownload:     services.PipelineRetryAttempts,
 		},
 		{
 			name: "502 — Separate failure",
@@ -363,7 +363,7 @@ func TestPreviewStemsHandler(t *testing.T) {
 			},
 			wantStatus:       http.StatusBadGateway,
 			wantBodyContains: "separate failed",
-			wantSeparate:     1,
+			wantSeparate:     services.PipelineRetryAttempts,
 		},
 		{
 			name: "502 — Transcode failure",
@@ -393,7 +393,7 @@ func TestPreviewStemsHandler(t *testing.T) {
 			},
 			wantStatus:       http.StatusBadGateway,
 			wantBodyContains: "melody failed",
-			wantMelody:       1,
+			wantMelody:       services.PipelineRetryAttempts,
 		},
 		{
 			name: "500 — storage.Has failure",

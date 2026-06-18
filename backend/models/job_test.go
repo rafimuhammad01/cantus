@@ -20,7 +20,6 @@ func TestJobStatus_Constants(t *testing.T) {
 		{name: "separating", got: models.StatusSeparating, want: "separating"},
 		{name: "melody", got: models.StatusMelody, want: "melody"},
 		{name: "shifting", got: models.StatusShifting, want: "shifting"},
-		{name: "processing", got: models.StatusProcessing, want: "processing"},
 		{name: "done", got: models.StatusDone, want: "done"},
 		{name: "error", got: models.StatusError, want: "error"},
 	}
@@ -44,12 +43,10 @@ func TestJob_JSONRoundTrip(t *testing.T) {
 		{
 			name: "all fields populated",
 			in: models.Job{
-				ID:         "job-abc-123",
-				Status:     models.StatusProcessing,
-				Message:    "separating vocals",
-				Progress:   42,
-				OutputPath: "/tmp/cache/dQw4w9WgXcQ/0/instrumental.mp3",
-				CreatedAt:  now,
+				ID:        "job-abc-123",
+				Status:    models.StatusSeparating,
+				Message:   "separating vocals",
+				CreatedAt: now,
 			},
 		},
 		{
@@ -83,12 +80,6 @@ func TestJob_JSONRoundTrip(t *testing.T) {
 			if got.Message != tt.in.Message {
 				t.Errorf("Message: got %q, want %q", got.Message, tt.in.Message)
 			}
-			if got.Progress != tt.in.Progress {
-				t.Errorf("Progress: got %d, want %d", got.Progress, tt.in.Progress)
-			}
-			if got.OutputPath != tt.in.OutputPath {
-				t.Errorf("OutputPath: got %q, want %q", got.OutputPath, tt.in.OutputPath)
-			}
 			if !got.CreatedAt.Equal(tt.in.CreatedAt) {
 				t.Errorf("CreatedAt: got %v, want %v", got.CreatedAt, tt.in.CreatedAt)
 			}
@@ -99,7 +90,7 @@ func TestJob_JSONRoundTrip(t *testing.T) {
 				t.Fatalf("json.Unmarshal into map error: %v", err)
 			}
 
-			expectedKeys := []string{"id", "status", "message", "progress", "output_path", "created_at"}
+			expectedKeys := []string{"id", "status", "message", "created_at"}
 			for _, key := range expectedKeys {
 				if _, ok := m[key]; !ok {
 					t.Errorf("JSON key %q missing from encoded output", key)

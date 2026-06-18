@@ -104,6 +104,19 @@ export async function previewShift(
   return resp.blob();
 }
 
+export async function prewarm(
+  videoId: string,
+  sig: string,
+): Promise<GenerateResponse> {
+  const resp = await fetch("/api/prewarm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ video_id: videoId, sig }),
+  });
+  await checkOk(resp);
+  return resp.json() as Promise<GenerateResponse>;
+}
+
 export async function generate(
   videoId: string,
   sig: string,

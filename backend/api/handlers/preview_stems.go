@@ -37,6 +37,7 @@ func PreviewStems(
 	ytSvc services.YouTubeService,
 	processor services.ProcessorClient,
 	transcode services.TranscodeFunc,
+	failures *services.VideoFailureTracker,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req previewStemsRequest
@@ -58,6 +59,13 @@ func PreviewStems(
 		ctx := r.Context()
 		log := logger.FromCtx(ctx)
 		videoID := req.VideoID
+
+		// Short-circuit blocked videoIDs before doing any GPU work.
+		if failures.IsBlocked(videoID) {
+			log.Warn().Str("videoId", videoID).Msg("preview-stems blocked: video has exceeded failure cap")
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "video temporarily unavailable after repeated failures, try again later"})
+			return
+		}
 
 		// Idempotent early-exit: both final outputs already cached → nothing to do.
 		mp3Has, err := storage.Has(ctx, storage.Key(videoID, "preview-stems/no_vocals.mp3"))
@@ -87,8 +95,11 @@ func PreviewStems(
 			return
 		}
 		if !previewHas {
-			if err := ytSvc.DownloadPreview(ctx, videoID); err != nil {
+			if err := services.Retry(ctx, services.PipelineRetryAttempts, services.PipelineRetryBaseDelay, func() error {
+				return ytSvc.DownloadPreview(ctx, videoID)
+			}); err != nil {
 				log.Error().Err(err).Str("videoId", videoID).Msg("DownloadPreview failed")
+				failures.RecordFailure(videoID)
 				writeJSON(w, http.StatusBadGateway, errorResponse{Error: "download failed"})
 				return
 			}
@@ -131,18 +142,23 @@ func PreviewStems(
 				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "sign put failed"})
 				return
 			}
-			if err := processor.Separate(ctx, inURL, vocalsPutURL, noVocalsPutURL); err != nil {
+			if err := services.Retry(ctx, services.PipelineRetryAttempts, services.PipelineRetryBaseDelay, func() error {
+				return processor.Separate(ctx, inURL, vocalsPutURL, noVocalsPutURL)
+			}); err != nil {
 				log.Error().Err(err).Str("videoId", videoID).Msg("processor.Separate failed")
+				failures.RecordFailure(videoID)
 				writeJSON(w, http.StatusBadGateway, errorResponse{Error: "separate failed"})
 				return
 			}
 			if err := storage.Verify(ctx, vocalsKey); err != nil {
 				log.Error().Err(err).Str("videoId", videoID).Msg("storage.Verify (vocals.wav) failed")
+				failures.RecordFailure(videoID)
 				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "vocals stem not materialized"})
 				return
 			}
 			if err := storage.Verify(ctx, noVocalsKey); err != nil {
 				log.Error().Err(err).Str("videoId", videoID).Msg("storage.Verify (no_vocals.wav) failed")
+				failures.RecordFailure(videoID)
 				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "no_vocals stem not materialized"})
 				return
 			}
@@ -206,18 +222,23 @@ func PreviewStems(
 				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "sign put failed"})
 				return
 			}
-			if err := processor.Melody(ctx, vocalsURL, outURL); err != nil {
+			if err := services.Retry(ctx, services.PipelineRetryAttempts, services.PipelineRetryBaseDelay, func() error {
+				return processor.Melody(ctx, vocalsURL, outURL)
+			}); err != nil {
 				log.Error().Err(err).Str("videoId", videoID).Msg("processor.Melody failed")
+				failures.RecordFailure(videoID)
 				writeJSON(w, http.StatusBadGateway, errorResponse{Error: "melody failed"})
 				return
 			}
 			if err := storage.Verify(ctx, melodyKey); err != nil {
 				log.Error().Err(err).Str("videoId", videoID).Msg("storage.Verify (melody.json) failed")
+				failures.RecordFailure(videoID)
 				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "melody not materialized"})
 				return
 			}
 		}
 
+		failures.RecordSuccess(videoID)
 		writeJSON(w, http.StatusOK, struct {
 			Ready bool `json:"ready"`
 		}{Ready: true})

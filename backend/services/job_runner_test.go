@@ -241,7 +241,7 @@ func TestJobRunner_Run(t *testing.T) {
 			downloadFullErr:   errors.New("yt-dlp: network error"),
 			wantStatus:        models.StatusError,
 			wantMsgContains:   "download",
-			wantDownloadCalls: 1,
+			wantDownloadCalls: services.PipelineRetryAttempts,
 			wantSeparateCalls: 0,
 			wantMelodyCalls:   0,
 			wantShiftCalls:    0,
@@ -253,7 +253,7 @@ func TestJobRunner_Run(t *testing.T) {
 			wantStatus:        models.StatusError,
 			wantMsgContains:   "separate",
 			wantDownloadCalls: 0,
-			wantSeparateCalls: 1,
+			wantSeparateCalls: services.PipelineRetryAttempts,
 			wantMelodyCalls:   0,
 			wantShiftCalls:    0,
 		},
@@ -265,7 +265,7 @@ func TestJobRunner_Run(t *testing.T) {
 			wantMsgContains:   "melody",
 			wantDownloadCalls: 0,
 			wantSeparateCalls: 0,
-			wantMelodyCalls:   1,
+			wantMelodyCalls:   services.PipelineRetryAttempts,
 			wantShiftCalls:    0,
 		},
 		{
@@ -277,7 +277,7 @@ func TestJobRunner_Run(t *testing.T) {
 			wantDownloadCalls: 0,
 			wantSeparateCalls: 0,
 			wantMelodyCalls:   0,
-			wantShiftCalls:    1,
+			wantShiftCalls:    services.PipelineRetryAttempts,
 		},
 	}
 
@@ -612,7 +612,8 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		}
 
 		jobID1 := runner.Submit(videoID, 0)
-		waitForStatus(t, jobStore, jobID1, models.StatusError, 3*time.Second)
+		// Retry loop: 3 attempts × (2s + 4s backoff) = ~6s minimum; allow extra headroom.
+		waitForStatus(t, jobStore, jobID1, models.StatusError, 15*time.Second)
 
 		// Second run: GPU Separate succeeds and commits stems.
 		successProc := &fakeProcessorJob{

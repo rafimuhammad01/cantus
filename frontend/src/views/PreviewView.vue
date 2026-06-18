@@ -167,6 +167,9 @@ onMounted(() => {
   // VOICE range subtitle below renders — same gating rule as the KEY label.
   void player.loadFullMelodyIfAvailable();
   void player.loadPreviewStems();
+  // Fire prewarm in the background so stages 1–3 complete before the user clicks
+  // "Practice full song". Invisible to the user; generate only runs stage 4.
+  player.startPrewarm(player.videoId, player.sig);
 });
 
 onUnmounted(() => {

@@ -3,6 +3,7 @@ import { ref, computed, watch } from "vue";
 import {
   previewURL,
   previewShift,
+  prewarm as apiPrewarm,
   generate as apiGenerate,
   getMelody,
   getPreviewKey,
@@ -97,16 +98,9 @@ export const usePlayerStore = defineStore("player", () => {
   const previewStemsLoading = ref(false); // shown by PreviewView as a spinner
   const previewStemsError = ref<string>("");
 
-  // Computed keys from the math-transposed preview melody (separate from full-song melody)
-  const previewOriginalKey = computed(() => previewMelody.value?.key ?? null);
-  const previewTransposedKey = computed(
-    () => previewMelody.value?.transposed_key ?? null,
-  );
-
   // Melody + key (populated after /api/melody fetches; key visible only after generate done)
   const melody = ref<MelodyResponse | null>(null);
   const originalKey = computed(() => melody.value?.key ?? null);
-  const transposedKey = computed(() => melody.value?.transposed_key ?? null);
 
   // Generate job
   const jobId = ref<string | null>(null);
@@ -260,6 +254,13 @@ export const usePlayerStore = defineStore("player", () => {
     }
   }
 
+  /** Fire-and-forget /api/prewarm. No UI state — purely a background optimization. */
+  function startPrewarm(vid: string, s: string): void {
+    void apiPrewarm(vid, s).catch(() => {
+      // Non-fatal — prewarm is an optimization; generate will run the full pipeline.
+    });
+  }
+
   /** Kick off /api/generate. Caller drives the SSE via useSSE. */
   async function startGenerate(): Promise<string> {
     const resp = await apiGenerate(videoId.value, sig.value, semitones.value);
@@ -296,13 +297,6 @@ export const usePlayerStore = defineStore("player", () => {
     );
   }
 
-  /** Once the generate completes, load melody (for key + Group 9) and switch audioSrc. */
-  async function onGenerateDone() {
-    melody.value = await getMelody(videoId.value, sig.value, semitones.value);
-    setAudioSrc(audioURL(videoId.value, sig.value, semitones.value));
-    mode.value = "full";
-  }
-
   return {
     videoId,
     sig,
@@ -315,11 +309,8 @@ export const usePlayerStore = defineStore("player", () => {
     previewStemsReady,
     previewStemsLoading,
     previewStemsError,
-    previewOriginalKey,
-    previewTransposedKey,
     melody,
     originalKey,
-    transposedKey,
     jobId,
     jobStatus,
     jobMessage,
@@ -331,8 +322,8 @@ export const usePlayerStore = defineStore("player", () => {
     loadPreviewKey,
     loadPreviewStems,
     loadFullMelodyIfAvailable,
+    startPrewarm,
     startGenerate,
     applyStatus,
-    onGenerateDone,
   };
 });

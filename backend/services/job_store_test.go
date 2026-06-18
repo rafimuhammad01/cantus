@@ -106,8 +106,8 @@ func TestJobStore_Update(t *testing.T) {
 
 			got := store.Update(tt.targetID, func(j *models.Job) {
 				closureCalls++
-				j.Status = models.StatusProcessing
-				j.Progress = 50
+				j.Status = models.StatusSeparating
+				j.Message = "separating"
 			})
 
 			if got != tt.wantReturn {
@@ -124,11 +124,11 @@ func TestJobStore_Update(t *testing.T) {
 				if !ok {
 					t.Fatalf("Get(%q) after Update: ok = false, want true", tt.targetID)
 				}
-				if j.Status != models.StatusProcessing {
-					t.Errorf("Get(%q).Status = %q, want %q", tt.targetID, j.Status, models.StatusProcessing)
+				if j.Status != models.StatusSeparating {
+					t.Errorf("Get(%q).Status = %q, want %q", tt.targetID, j.Status, models.StatusSeparating)
 				}
-				if j.Progress != 50 {
-					t.Errorf("Get(%q).Progress = %d, want 50", tt.targetID, j.Progress)
+				if j.Message != "separating" {
+					t.Errorf("Get(%q).Message = %q, want %q", tt.targetID, j.Message, "separating")
 				}
 			} else {
 				// Closure must never have been called.
@@ -329,8 +329,8 @@ func TestJobStore_ConcurrentAccess(t *testing.T) {
 					store.Create(newTestJob(jobID, time.Now()))
 
 					store.Update(jobID, func(j *models.Job) {
-						j.Status = models.StatusProcessing
-						j.Progress = 42
+						j.Status = models.StatusSeparating
+						j.Message = "separating"
 					})
 
 					store.Get(jobID)

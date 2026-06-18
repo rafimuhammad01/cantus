@@ -24,7 +24,6 @@ type previewKeyResponse struct {
 func PreviewKey(
 	signer *services.Signer,
 	storage services.Storage,
-	_ services.YouTubeService,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		videoID := chi.URLParam(r, "videoId")

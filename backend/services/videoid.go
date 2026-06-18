@@ -1,10 +1,10 @@
 package services
 
-import "regexp"
-
-var videoIDRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
+import "cantus/backend/models"
 
 // ValidVideoID reports whether s matches the YouTube video ID format.
+// The canonical regex lives in models.ValidVideoID; this re-exports it for
+// handler and service code that imports services but not models directly.
 func ValidVideoID(s string) bool {
-	return videoIDRegex.MatchString(s)
+	return models.ValidVideoID(s)
 }

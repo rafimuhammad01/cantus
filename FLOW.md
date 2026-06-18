@@ -2,34 +2,31 @@
 
 How a user goes from typing a search query to singing along, and which service does what at each step. Read this alongside `CLAUDE.md` (architecture) and `TASKS.md` (build order).
 
-The flow has **five stages**. The first three are cheap and fast — they exist so the user can find the right song and the right key without paying the cost of Demucs. Stage 4 is the slow commit. Stage 5 is the singing experience.
+The flow has **five stages**. The first three are cheap and fast — they exist so the user can find the right song and the right key without paying the cost of BS-Roformer. Stage 4 is the slow commit. Stage 5 is the singing experience.
 
 **Two things to know upfront:**
 
-1. **Search is via ytmusicapi (YouTube Music), not raw YouTube.** This gives song-entity-level results (one row per song, with artist + album metadata) instead of arbitrary YouTube videos. ytmusicapi lives in the Python service.
+1. **Search runs in the Go backend** via the `raitonoberu/ytmusic` library (a Go drop-in for ytmusicapi). No Python service is involved in search. This gives song-entity-level results (one row per song, with artist + album metadata) instead of arbitrary YouTube videos.
 2. **All audio handlers require an HMAC sig** issued by `/api/songs/search`. The browser stores `(videoId, sig)` together and passes both on every subsequent call. A direct hit to `/api/preview/:videoId` without a valid sig returns 400 — handlers can only process videoIds that came from a real search.
 
 ---
 
-## Stage 1 — Search (~1-2s, no audio yet) — ytmusicapi song entities
+## Stage 1 — Search (~1-2s, no audio yet) — in-Go song entities
 
 ```
 Browser ──GET /api/songs/search?q=wish+you+were+here──► Go :8080
                                                           │
-                                                          ├── HTTP ──► Python :8090
-                                                          │              POST /search { query, limit:10 }
-                                                          │              │
-                                                          │              └── ytmusicapi
-                                                          │                  YTMusic().search(query, filter="songs", limit=10)
-                                                          │              ◄── [{videoId, title, artists[], album,
-                                                          │                    duration, thumbnails[]}, ...]
+                                                          ├── raitonoberu/ytmusic (Go library)
+                                                          │     YTMusic.Search(query, filter="songs", limit=10)
+                                                          │     → [{videoId, title, artists[], album,
+                                                          │         duration, thumbnails[]}, ...]
                                                           │
                                                           └── HMAC-sign each videoId
                                                               sig = HMAC-SHA256(VIDEO_ID_SIGNING_KEY, videoId)
 Browser ◄──── [{video_id, sig, title, artist, album, duration_sec, thumbnail_url}, ...]
 ```
 
-`SearchView.vue` renders results as `SongCard.vue`. Because `filter="songs"` is set on the Python side, results are **canonical song entities** — one row per song. Searching *"wish you were here"* yields Pink Floyd, Neck Deep, Avril Lavigne as distinct rows, NOT three variants of the same song. Lyric videos, live versions, covers, and non-music videos are excluded by the YouTube Music catalog itself.
+`SearchView.vue` renders results as `SongCard.vue`. Because `filter="songs"` is set, results are **canonical song entities** — one row per song. Searching *"wish you were here"* yields Pink Floyd, Neck Deep, Avril Lavigne as distinct rows, NOT three variants of the same song. Lyric videos, live versions, covers, and non-music videos are excluded by the YouTube Music catalog itself.
 
 `(videoId, sig)` pairs are stored together in the Pinia search store, then handed to the player store when the user picks a card. The `sig` is required for every subsequent audio call.
 
@@ -86,7 +83,36 @@ Browser ◄──── 30s clip, shifted -2 semitones, WITH vocals ────
 
 User tries -3, then +1, then settles on -2. Each new semitone is ~1-2s cold; repeats are instant (cached per-semitone).
 
-**Why this stage exists**: Demucs has not run yet. The user finds the right key cheaply, before paying any expensive cost.
+**Why this stage exists**: BS-Roformer has not run yet. The user finds the right key cheaply, before paying any expensive cost.
+
+---
+
+## Stage 3b — Preview stems (BS-Roformer + CREPE on the 30s clip, ~30-60s cold)
+
+While the user is iterating on key, the frontend also fires `/api/preview-stems` in the background. This runs the full separation + melody pipeline on the 30s preview clip so the user can hear the clean instrumental *and* see the pitch diagram before committing to the slow full-song generate.
+
+```
+Browser ──POST /api/preview-stems {video_id, sig}──► Go :8080
+                                                    │
+                                                    ├── ensure preview.mp3 (Stage 2 prerequisite)
+                                                    ├── HTTP ──► Python :8090
+                                                    │              POST /separate on preview.mp3
+                                                    │              (BS-Roformer → preview-stems/vocals.wav
+                                                    │               + preview-stems/no_vocals.wav)
+                                                    ├── ffmpeg transcode:
+                                                    │     preview-stems/no_vocals.wav → preview-stems/no_vocals.mp3
+                                                    └── HTTP ──► Python :8090
+                                                                   POST /melody on preview-stems/vocals.wav
+                                                                   (CREPE → preview-stems/melody.json)
+Browser ◄──── {ready: true}
+```
+
+Once `{ready: true}`, the frontend fetches:
+
+- `GET /api/preview-audio/:videoId?sig=` — serves `preview-stems/no_vocals.mp3` (original key, 30s clean instrumental)
+- `GET /api/preview-melody/:videoId/:semitones?sig=` — serves math-transposed melody from `preview-stems/melody.json`
+
+The shifted-key preview audio (with original vocals) still comes from `/api/preview-shift`; the stems pipeline adds the *clean* instrumental layer used once the user picks their key. Retry and failure-tracker logic mirror the full pipeline.
 
 ---
 
@@ -109,12 +135,12 @@ Frontend opens an SSE stream:
 ```
 Browser ──GET /api/status/abc123 (SSE)──► Go :8080
 Browser ◄── event: queued        position:1
-       ◄── event: downloading    (yt-dlp full song → original.wav)        ~10-30s
-       ◄── event: separating     (Python /separate, Demucs → vocals.wav   60-120s
+       ◄── event: downloading    (yt-dlp full song → original.wav)            ~10-30s
+       ◄── event: separating     (Python /separate, BS-Roformer → vocals.wav  60-120s
                                   + no_vocals.wav)
-       ◄── event: melody         (Python /melody, CREPE on vocals.wav     30-60s
+       ◄── event: melody         (Python /melody, CREPE on vocals.wav         30-60s
                                   → melody.json with original-key Hz)
-       ◄── event: shifting       (Python /shift on no_vocals.wav, -2      5-15s
+       ◄── event: shifting       (rubberband CLI on no_vocals.wav, -2         5-15s
                                   → shifted/-2/audio.mp3)
        ◄── event: done
 ```
@@ -126,13 +152,13 @@ tmp/cache/fJ9rUzIMcZQ/
   preview.mp3                    (from Stage 2)
   preview-shifts/-2.mp3          (from Stage 3)
   original.wav                   ← new
-  vocals.wav                     ← new (Demucs)
-  no_vocals.wav                  ← new (Demucs)
+  vocals.wav                     ← new (BS-Roformer)
+  no_vocals.wav                  ← new (BS-Roformer)
   melody.json                    ← new (CREPE on vocals)
   shifted/-2/audio.mp3           ← new
 ```
 
-**Why CREPE runs on `vocals.wav`, not `original.wav`**: CREPE is monophonic. On a full mix it locks onto whichever pitch is loudest (often bass or lead guitar). Demucs first → CREPE on isolated voice → accurate melody.
+**Why CREPE runs on `vocals.wav`, not `original.wav`**: CREPE is monophonic. On a full mix it locks onto whichever pitch is loudest (often bass or lead guitar). BS-Roformer first → CREPE on isolated voice → accurate melody.
 
 ---
 
@@ -177,21 +203,13 @@ Each frame (~every 30ms):
 | Same song, same key | instant | everything cached |
 | Same song, different key | 5-15s | only `/shift` on cached `no_vocals.wav` + transcode |
 | New song | 90-180s | full pipeline cold |
-| **Same song, after TTL expiry** | 90-180s | full pipeline re-runs — accepted tradeoff |
+| **Same song, cache cleared** | 90-180s | full pipeline re-runs — accepted tradeoff |
 
-The trick that makes this fast: **stems (`vocals.wav`, `no_vocals.wav`, `melody.json`) are cached per `video_id` alone**, not per key. Within the TTL window, Demucs and CREPE run exactly once per song. Pitch shift runs once per (song, key) pair.
+The trick that makes this fast: **stems (`vocals.wav`, `no_vocals.wav`, `melody.json`) are cached per `video_id` alone**, not per key. Within the cache window, BS-Roformer and CREPE run exactly once per song. Pitch shift runs once per (song, key) pair.
 
-## Cache lifetime — TTL, not permanent
+## Cache lifetime — permanent (local disk)
 
-Cache files are intentionally non-persistent:
-
-- **TTL** configurable via `CACHE_TTL_HOURS` env var (default **24h**).
-- **Phase 1 (local disk)**: a cleanup goroutine in `services/storage.go` runs every `CACHE_CLEANUP_INTERVAL_MIN` (default 10 min), deletes files with mtime older than TTL, prunes empty `{video_id}/` directories.
-- **Phase 2 (cloud)**: bucket lifecycle policy (S3 / R2 / GCS — all support 1-day minimum granularity).
-- **Why**: most songs are sung a few times then never revisited. Indefinite storage of cold songs is pure cloud-cost waste.
-- **Tradeoff**: a user who returns after TTL expiry re-pays 90-180s. The UI doesn't differentiate — cache miss looks identical to a first-time generate.
-
-All cache I/O goes through the `Storage` interface (`LocalPath / Has / Commit / Open`). `Has()` is TTL-aware: it returns false for files past TTL even before the cleanup goroutine has physically deleted them, preventing a race where a stale file is served moments before deletion.
+Cache files under `tmp/cache/` are kept indefinitely. `LocalDiskStorage` has no TTL enforcement and no cleanup goroutine; `Storage.Has()` returns true iff the file exists and is non-zero size (zero-byte = corrupt → regenerate). Rationale: re-running BS-Roformer/CREPE on GPU is far more expensive than disk space. Cloud deployment uses R2 with a bucket lifecycle policy for eventual eviction.
 
 Note: this is separate from the **JobStore 1h TTL**, which evicts in-memory job-status records (small structs, lost on restart — fine).
 

@@ -12,16 +12,14 @@ const minSigningKeyLen = 32
 // Values are read from environment variables; missing/empty vars fall back
 // to the documented defaults.
 type Config struct {
-	PythonProcessorURL string // PYTHON_PROCESSOR_URL, default "http://localhost:8090"
-	AudioTmpDir        string // AUDIO_TMP_DIR, default "./tmp"
-	CacheDir           string // CACHE_DIR, default "./tmp/cache"
-	MaxConcurrentJobs  int    // MAX_CONCURRENT_JOBS, default 1
-	AllowedOrigins     string // ALLOWED_ORIGINS, default "http://localhost:5173"
-	Port               int    // PORT, default 8080
-	VideoIDSigningKey  string // VIDEO_ID_SIGNING_KEY, required, >= 32 chars
-	LogLevel           string // LOG_LEVEL, one of debug/info/warn/error, default "info"
+	CacheDir          string // CACHE_DIR, default "./tmp/cache"
+	MaxConcurrentJobs int    // MAX_CONCURRENT_JOBS, default 1
+	AllowedOrigins    string // ALLOWED_ORIGINS, default "http://localhost:5173"
+	Port              int    // PORT, default 8080
+	VideoIDSigningKey string // VIDEO_ID_SIGNING_KEY, required, >= 32 chars
+	LogLevel          string // LOG_LEVEL, one of debug/info/warn/error, default "info"
 
-	ProcessorURL            string // PROCESSOR_URL, default = PYTHON_PROCESSOR_URL
+	ProcessorURL            string // PROCESSOR_URL, default "http://localhost:8090" (also inherits PYTHON_PROCESSOR_URL for backward compat)
 	ProcessorTimeoutSeconds int    // PROCESSOR_TIMEOUT_SECONDS, default 180
 	RubberbandPath          string // RUBBERBAND_PATH, default "rubberband"
 	FFmpegPath              string // FFMPEG_PATH, default "ffmpeg"
@@ -58,9 +56,8 @@ func Load() (*Config, error) {
 	cfg.LogLevel = logLevel
 
 	// String fields with defaults.
-	cfg.PythonProcessorURL = getEnvString("PYTHON_PROCESSOR_URL", "http://localhost:8090")
-	cfg.ProcessorURL = getEnvString("PROCESSOR_URL", cfg.PythonProcessorURL)
-	cfg.AudioTmpDir = getEnvString("AUDIO_TMP_DIR", "./tmp")
+	// PYTHON_PROCESSOR_URL is the legacy name; PROCESSOR_URL overrides it if set.
+	cfg.ProcessorURL = getEnvString("PROCESSOR_URL", getEnvString("PYTHON_PROCESSOR_URL", "http://localhost:8090"))
 	cfg.CacheDir = getEnvString("CACHE_DIR", "./tmp/cache")
 	cfg.AllowedOrigins = getEnvString("ALLOWED_ORIGINS", "http://localhost:5173")
 	cfg.RubberbandPath = getEnvString("RUBBERBAND_PATH", "rubberband")

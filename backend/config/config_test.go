@@ -18,12 +18,6 @@ func TestLoad_HappyPath_WithDefaults(t *testing.T) {
 		t.Fatalf("Load() returned unexpected error: %v", err)
 	}
 
-	if cfg.PythonProcessorURL != "http://localhost:8090" {
-		t.Errorf("PythonProcessorURL: got %q, want %q", cfg.PythonProcessorURL, "http://localhost:8090")
-	}
-	if cfg.AudioTmpDir != "./tmp" {
-		t.Errorf("AudioTmpDir: got %q, want %q", cfg.AudioTmpDir, "./tmp")
-	}
 	if cfg.CacheDir != "./tmp/cache" {
 		t.Errorf("CacheDir: got %q, want %q", cfg.CacheDir, "./tmp/cache")
 	}
@@ -59,8 +53,6 @@ func TestLoad_HappyPath_AllExplicit(t *testing.T) {
 	signingKey := strings.Repeat("z", 64)
 
 	t.Setenv("VIDEO_ID_SIGNING_KEY", signingKey)
-	t.Setenv("PYTHON_PROCESSOR_URL", "http://python:9999")
-	t.Setenv("AUDIO_TMP_DIR", "/var/audio/tmp")
 	t.Setenv("CACHE_DIR", "/var/audio/cache")
 	t.Setenv("MAX_CONCURRENT_JOBS", "5")
 	t.Setenv("ALLOWED_ORIGINS", "https://example.com")
@@ -75,12 +67,6 @@ func TestLoad_HappyPath_AllExplicit(t *testing.T) {
 		t.Fatalf("Load() returned unexpected error: %v", err)
 	}
 
-	if cfg.PythonProcessorURL != "http://python:9999" {
-		t.Errorf("PythonProcessorURL: got %q, want %q", cfg.PythonProcessorURL, "http://python:9999")
-	}
-	if cfg.AudioTmpDir != "/var/audio/tmp" {
-		t.Errorf("AudioTmpDir: got %q, want %q", cfg.AudioTmpDir, "/var/audio/tmp")
-	}
 	if cfg.CacheDir != "/var/audio/cache" {
 		t.Errorf("CacheDir: got %q, want %q", cfg.CacheDir, "/var/audio/cache")
 	}

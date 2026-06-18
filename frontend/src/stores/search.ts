@@ -51,7 +51,6 @@ export const useSearchStore = defineStore("search", () => {
     query,
     results,
     hasMore,
-    offset,
     loading,
     error,
     runSearch,

@@ -14,31 +14,10 @@ import (
 	"cantus/backend/services"
 )
 
-// fakeYouTubeKey is a test double for services.YouTubeService, used in preview_key tests.
-type fakeYouTubeKey struct {
-	onDownload func(videoID string)
-	err        error
-	callCount  int
-}
-
-func (f *fakeYouTubeKey) Search(_ context.Context, _ string, _, _ int) (services.SearchPage, error) {
-	return services.SearchPage{}, nil
-}
-
-func (f *fakeYouTubeKey) DownloadPreview(_ context.Context, videoID string) error {
-	f.callCount++
-	if f.onDownload != nil {
-		f.onDownload(videoID)
-	}
-	return f.err
-}
-
-func (f *fakeYouTubeKey) DownloadFull(_ context.Context, _ string) error { return nil }
-
 // previewKeyRouter wires a chi router with the PreviewKey handler at /api/preview-key/{videoId}.
-func previewKeyRouter(signer *services.Signer, storage services.Storage, yt services.YouTubeService) *chi.Mux {
+func previewKeyRouter(signer *services.Signer, storage services.Storage) *chi.Mux {
 	r := chi.NewRouter()
-	r.Get("/api/preview-key/{videoId}", handlers.PreviewKey(signer, storage, yt))
+	r.Get("/api/preview-key/{videoId}", handlers.PreviewKey(signer, storage))
 	return r
 }
 
@@ -68,99 +47,91 @@ func TestPreviewKeyHandler(t *testing.T) {
 		name string
 		url  string
 
-		// setup configures storage and fake YouTube before the request.
-		setup func(t *testing.T) (services.Storage, *fakeYouTubeKey)
+		// setup configures storage before the request.
+		setup func(t *testing.T) services.Storage
 
 		wantStatus       int
 		wantBodyContains string
 		wantKey          string
-		wantYTCallCount  int
 		wantCachedAfter  bool // assert preview-key.json is in storage after request
 	}{
 		{
 			name: "melody.json present returns its key",
 			url:  "/api/preview-key/" + validID + "?sig=" + validSig,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey) {
+			setup: func(t *testing.T) services.Storage {
 				st := newKeyStorage(t)
 				// Pre-stage melody.json (CREPE on isolated full-song vocals — the one accurate source).
 				commitKeyFile(t, st, validID, "melody.json", []byte(`{"key":"F major"}`))
-				return st, &fakeYouTubeKey{}
+				return st
 			},
-			wantStatus:      http.StatusOK,
-			wantKey:         "F major",
-			wantYTCallCount: 0,
+			wantStatus: http.StatusOK,
+			wantKey:    "F major",
 		},
 		{
 			name: "melody.json absent returns empty key (UI hides the label)",
 			url:  "/api/preview-key/" + validID + "?sig=" + validSig,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey) {
+			setup: func(t *testing.T) services.Storage {
 				// Empty storage — no melody.json (song hasn't been generated yet).
-				return newKeyStorage(t), &fakeYouTubeKey{}
+				return newKeyStorage(t)
 			},
-			wantStatus:      http.StatusOK,
-			wantKey:         "",
-			wantYTCallCount: 0,
+			wantStatus: http.StatusOK,
+			wantKey:    "",
 		},
 		{
 			name: "melody.json with empty key field returns empty key",
 			url:  "/api/preview-key/" + validID + "?sig=" + validSig,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey) {
+			setup: func(t *testing.T) services.Storage {
 				st := newKeyStorage(t)
 				commitKeyFile(t, st, validID, "melody.json", []byte(`{"key":""}`))
-				return st, &fakeYouTubeKey{}
+				return st
 			},
-			wantStatus:      http.StatusOK,
-			wantKey:         "",
-			wantYTCallCount: 0,
+			wantStatus: http.StatusOK,
+			wantKey:    "",
 		},
 		{
 			name: "invalid videoID",
 			url:  "/api/preview-key/bad!!!id?sig=anything",
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey) {
-				return newKeyStorage(t), &fakeYouTubeKey{}
+			setup: func(t *testing.T) services.Storage {
+				return newKeyStorage(t)
 			},
 			wantStatus:       http.StatusBadRequest,
 			wantBodyContains: "invalid videoId",
-			wantYTCallCount:  0,
 		},
 		{
 			name: "invalid sig",
 			url:  "/api/preview-key/" + validID + "?sig=deadbeef",
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey) {
-				return newKeyStorage(t), &fakeYouTubeKey{}
+			setup: func(t *testing.T) services.Storage {
+				return newKeyStorage(t)
 			},
 			wantStatus:       http.StatusBadRequest,
 			wantBodyContains: "invalid sig",
-			wantYTCallCount:  0,
 		},
 		{
 			name: "missing sig",
 			url:  "/api/preview-key/" + validID,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey) {
-				return newKeyStorage(t), &fakeYouTubeKey{}
+			setup: func(t *testing.T) services.Storage {
+				return newKeyStorage(t)
 			},
 			wantStatus:       http.StatusBadRequest,
 			wantBodyContains: "invalid sig",
-			wantYTCallCount:  0,
 		},
 		{
 			name: "malformed melody.json returns 500",
 			url:  "/api/preview-key/" + validID + "?sig=" + validSig,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeKey) {
+			setup: func(t *testing.T) services.Storage {
 				st := newKeyStorage(t)
 				commitKeyFile(t, st, validID, "melody.json", []byte(`not-json{`))
-				return st, &fakeYouTubeKey{}
+				return st
 			},
 			wantStatus:       http.StatusInternalServerError,
 			wantBodyContains: "melody parse failed",
-			wantYTCallCount:  0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			st, yt := tt.setup(t)
-			router := previewKeyRouter(signer, st, yt)
+			st := tt.setup(t)
+			router := previewKeyRouter(signer, st)
 
 			req := httptest.NewRequest(http.MethodGet, tt.url, nil)
 			rec := httptest.NewRecorder()
@@ -190,12 +161,9 @@ func TestPreviewKeyHandler(t *testing.T) {
 				}
 			}
 
-			if got, want := yt.callCount, tt.wantYTCallCount; got != want {
-				t.Errorf("DownloadPreview call count: got %d, want %d", got, want)
-			}
-
 			if tt.wantCachedAfter && rec.Code == http.StatusOK {
-				ok, err := st.Has(context.Background(), st.Key(validID, "preview-key.json"))
+				lStorage := st.(*services.LocalDiskStorage)
+				ok, err := lStorage.Has(context.Background(), lStorage.Key(validID, "preview-key.json"))
 				if err != nil {
 					t.Errorf("storage.Has(preview-key.json) after request: %v", err)
 				} else if !ok {
