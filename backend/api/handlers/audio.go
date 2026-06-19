@@ -56,6 +56,11 @@ func Audio(signer *services.Signer, storage services.Storage) http.HandlerFunc {
 			return
 		}
 
+		if url, err := storage.SignGet(ctx, key); err == nil && url != "" {
+			http.Redirect(w, r, url, http.StatusFound)
+			return
+		}
+
 		rc, err := storage.Open(ctx, key)
 		if err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Int("semitones", semitones).Msg("storage.Open failed")

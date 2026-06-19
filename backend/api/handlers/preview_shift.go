@@ -227,6 +227,11 @@ func PreviewShift(
 			serveName = legacyShiftedName
 		}
 
+		if url, err := storage.SignGet(ctx, serveKey); err == nil && url != "" {
+			http.Redirect(w, r, url, http.StatusFound)
+			return
+		}
+
 		rc, err := storage.Open(ctx, serveKey)
 		if err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("storage.Open failed")

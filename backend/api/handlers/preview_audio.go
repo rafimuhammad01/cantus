@@ -50,6 +50,11 @@ func PreviewAudio(signer *services.Signer, storage services.Storage) http.Handle
 			return
 		}
 
+		if url, err := storage.SignGet(ctx, key); err == nil && url != "" {
+			http.Redirect(w, r, url, http.StatusFound)
+			return
+		}
+
 		rc, err := storage.Open(ctx, key)
 		if err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Open failed")

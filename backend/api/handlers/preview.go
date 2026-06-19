@@ -45,6 +45,11 @@ func Preview(signer *services.Signer, storage services.Storage, svc services.You
 			}
 		}
 
+		if url, err := storage.SignGet(r.Context(), key); err == nil && url != "" {
+			http.Redirect(w, r, url, http.StatusFound)
+			return
+		}
+
 		rc, err := storage.Open(r.Context(), key)
 		if err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Open failed")
