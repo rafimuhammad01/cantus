@@ -40,8 +40,8 @@ func TestCLIShifter_Shift(t *testing.T) {
 			wantCalls: []string{"rubberband"}, wantPFlag: "-3"},
 		{name: "mp3→mp3 decodes, shifts, encodes", inExt: ".mp3", outExt: ".mp3", semitones: 5,
 			wantCalls: []string{"ffmpeg", "rubberband", "ffmpeg"}, wantPFlag: "5"},
-		{name: "wav→mp3 shifts then encodes", inExt: ".wav", outExt: ".mp3", semitones: 0,
-			wantCalls: []string{"rubberband", "ffmpeg"}, wantPFlag: "0"},
+		{name: "wav→mp3 zero-shift skips rubberband", inExt: ".wav", outExt: ".mp3", semitones: 0,
+			wantCalls: []string{"ffmpeg"}, wantPFlag: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -87,7 +87,12 @@ func TestCLIShifter_Shift(t *testing.T) {
 }
 
 func TestCLIShifter_Shift_RunnerError(t *testing.T) {
-	tests := []struct{ name string }{{name: "rubberband failure surfaces"}}
+	tests := []struct {
+		name      string
+		semitones float64
+	}{
+		{name: "rubberband failure surfaces (non-zero semitones)", semitones: 3},
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -101,7 +106,7 @@ func TestCLIShifter_Shift_RunnerError(t *testing.T) {
 				return nil
 			}}
 			s := services.NewCLIShifter("rubberband", "ffmpeg", runner)
-			if err := s.Shift(context.Background(), in, out, 0); err == nil {
+			if err := s.Shift(context.Background(), in, out, tt.semitones); err == nil {
 				t.Fatal("want error, got nil")
 			}
 		})

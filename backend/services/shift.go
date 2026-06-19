@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -31,6 +32,9 @@ func NewCLIShifter(rubberband, ffmpeg string, runner CommandRunner) *CLIShifter 
 }
 
 // Shift decodes (if MP3) → rubberband-shifts → encodes (if MP3 out).
+// When semitones is exactly 0, rubberband is skipped entirely: the WAV input
+// is passed straight to ffmpeg for encoding (or copied for WAV output), saving
+// the full rubberband processing pass on large files.
 // Scratch tempfiles live in the same directory as outputPath and are cleaned up.
 func (s *CLIShifter) Shift(ctx context.Context, inputPath, outputPath string, semitones float64) error {
 	if _, err := os.Stat(inputPath); err != nil {
@@ -65,6 +69,22 @@ func (s *CLIShifter) Shift(ctx context.Context, inputPath, outputPath string, se
 		}
 	}
 
+	// When semitones == 0, skip rubberband entirely — the output is audibly identical
+	// to the input, so we only need to transcode format if required.
+	if semitones == 0 {
+		if outIsMP3 {
+			if err := s.Runner.Run(ctx, s.FFmpeg, "-y", "-i", wavIn, "-b:a", "128k", "-ar", "44100", outputPath); err != nil {
+				return fmt.Errorf("shift: ffmpeg encode (zero-shift): %w", err)
+			}
+		} else {
+			// WAV → WAV with 0 semitones: copy the file.
+			if err := copyFile(wavIn, outputPath); err != nil {
+				return fmt.Errorf("shift: copy (zero-shift): %w", err)
+			}
+		}
+		return nil
+	}
+
 	wavOut := outputPath
 	if outIsMP3 {
 		f, err := os.CreateTemp(outDir, "shift-out-*.wav")
@@ -88,4 +108,22 @@ func (s *CLIShifter) Shift(ctx context.Context, inputPath, outputPath string, se
 	}
 
 	return nil
+}
+
+// copyFile copies src to dst, creating dst if it does not exist.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Close() }()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Close()
 }
