@@ -5,6 +5,8 @@ import type { JobStatusName } from "@/services/api";
 const props = defineProps<{
   status: JobStatusName | "idle";
   message: string;
+  /** Elapsed seconds in the current active stage — shown next to the active step label. */
+  elapsedStageSec?: number;
 }>();
 
 interface Step {
@@ -86,7 +88,7 @@ const visible = computed(() => props.status !== "idle");
                 : 'bg-[var(--color-border)]',
           ]"
         />
-        <div class="flex-1 min-w-0">
+        <div class="flex-1 min-w-0 flex items-baseline gap-2">
           <div
             class="text-[14px] transition-colors"
             :class="[
@@ -97,6 +99,15 @@ const visible = computed(() => props.status !== "idle");
           >
             {{ step.label }}
           </div>
+          <span
+            v-if="
+              step.state === 'active' &&
+              elapsedStageSec !== undefined &&
+              elapsedStageSec > 0
+            "
+            class="text-[12px] text-[var(--color-text-faint)] tabular-nums"
+            >{{ elapsedStageSec }}s</span
+          >
         </div>
       </li>
     </ol>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch, watchEffect } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { usePlayerStore } from "@/stores/player";
 import { useSearchStore } from "@/stores/search";
@@ -111,6 +111,31 @@ const shiftPending = ref(false);
 const pendingSemitones = ref(player.semitones);
 let shiftTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Elapsed time counter while preview-stems is loading.
+const previewStemsElapsedSec = ref(0);
+let previewStemsStartTime = 0;
+let previewStemsElapsedTimer: ReturnType<typeof setInterval> | null = null;
+
+watchEffect(() => {
+  if (player.previewStemsLoading) {
+    if (previewStemsElapsedTimer === null) {
+      previewStemsStartTime = Date.now();
+      previewStemsElapsedSec.value = 0;
+      previewStemsElapsedTimer = setInterval(() => {
+        previewStemsElapsedSec.value = Math.floor(
+          (Date.now() - previewStemsStartTime) / 1000,
+        );
+      }, 1000);
+    }
+  } else {
+    if (previewStemsElapsedTimer !== null) {
+      clearInterval(previewStemsElapsedTimer);
+      previewStemsElapsedTimer = null;
+    }
+    previewStemsElapsedSec.value = 0;
+  }
+});
+
 function onSemitonesChange(n: number) {
   pendingSemitones.value = n;
   if (n === player.semitones) {
@@ -174,6 +199,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (shiftTimer !== null) clearTimeout(shiftTimer);
+  if (previewStemsElapsedTimer !== null)
+    clearInterval(previewStemsElapsedTimer);
 });
 </script>
 
@@ -245,12 +272,19 @@ onUnmounted(() => {
             <!-- Loading state — same card footprint as PitchDiagram -->
             <div
               v-if="player.previewStemsLoading"
-              class="absolute inset-0 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] flex items-center justify-center"
+              class="absolute inset-0 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] flex flex-col items-center justify-center gap-2"
             >
               <ProcessingStatus
                 status="separating"
                 message="Getting your accompaniment ready…"
+                :elapsed-stage-sec="previewStemsElapsedSec"
               />
+              <p
+                v-if="previewStemsElapsedSec > 0"
+                class="text-[12px] text-[var(--color-text-faint)]"
+              >
+                Still working… ({{ previewStemsElapsedSec }}s)
+              </p>
             </div>
 
             <!-- Error state -->

@@ -16,6 +16,15 @@ import LyricsPanel from "@/components/LyricsPanel.vue";
 import { useLyrics, type LyricsSongBundle } from "@/composables/useLyrics";
 import { retryPolicy } from "@/lib/retryPolicy";
 
+// Elapsed time in the current active stage (resets on stage change).
+const elapsedStageSec = ref(0);
+let stageStartTime = Date.now();
+let lastProgressTime = Date.now();
+
+// Stall watchdog — ticks every second: increments elapsedStageSec and checks
+// for silence exceeding stallTimeoutMs.
+let stallWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+
 const route = useRoute();
 const router = useRouter();
 const player = usePlayerStore();
@@ -38,6 +47,35 @@ const NAV_DEBOUNCE_MS = 600;
 const autoRetryCount = ref(0);
 const autoRetryExhausted = ref(false);
 let autoRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+function startStallWatchdog() {
+  stopStallWatchdog();
+  stageStartTime = Date.now();
+  lastProgressTime = Date.now();
+  elapsedStageSec.value = 0;
+  stallWatchdogTimer = setInterval(() => {
+    const now = Date.now();
+    elapsedStageSec.value = Math.floor((now - stageStartTime) / 1000);
+    if (
+      player.jobStatus !== "done" &&
+      player.jobStatus !== "error" &&
+      player.jobStatus !== "idle" &&
+      now - lastProgressTime >= retryPolicy.stallTimeoutMs
+    ) {
+      // Stalled — treat as a transient failure and auto-retry.
+      stopStallWatchdog();
+      scheduleAutoRetry();
+    }
+  }, 1000);
+}
+
+function stopStallWatchdog() {
+  if (stallWatchdogTimer !== null) {
+    clearInterval(stallWatchdogTimer);
+    stallWatchdogTimer = null;
+  }
+  elapsedStageSec.value = 0;
+}
 
 // Lyrics — currentTimeSec driven by the AudioPlayer's timeupdate event.
 const currentTimeSec = ref(0);
@@ -141,8 +179,11 @@ async function loadDoneArtifacts() {
 function startSSE() {
   if (!player.jobId) return;
   sse.open(statusURL(player.jobId), (ev) => {
+    // Any SSE message counts as progress — bump the stall timer.
+    lastProgressTime = Date.now();
     player.applyStatus(ev.status, ev.message);
   });
+  startStallWatchdog();
 }
 
 /**
@@ -151,6 +192,7 @@ function startSSE() {
  * so the UI can show a manual Retry button.
  */
 function scheduleAutoRetry() {
+  stopStallWatchdog();
   if (autoRetryExhausted.value) return;
   if (autoRetryCount.value >= retryPolicy.maxAttempts) {
     autoRetryExhausted.value = true;
@@ -174,6 +216,7 @@ function scheduleAutoRetry() {
 
 /** Manual retry — resets the exhaustion counter so the user gets fresh attempts. */
 function onManualRetry() {
+  stopStallWatchdog();
   autoRetryCount.value = 0;
   autoRetryExhausted.value = false;
   player.jobStatus = "queued";
@@ -202,6 +245,7 @@ watch(
 
 // Watch player.jobStatus: if the SSE reports an error from the server, also
 // trigger auto-retry (server-side pipeline error, not just a connection drop).
+// Also reset elapsed timer on every stage advance.
 watch(
   () => player.jobStatus,
   (next, prev) => {
@@ -209,10 +253,22 @@ watch(
       // Reset retry counters on success.
       autoRetryCount.value = 0;
       autoRetryExhausted.value = false;
+      stopStallWatchdog();
       void loadDoneArtifacts();
     }
     if (next === "error" && prev !== "error") {
       scheduleAutoRetry();
+    }
+    // Stage advanced — reset elapsed timer and bump last-progress timestamp.
+    if (
+      next !== prev &&
+      next !== "done" &&
+      next !== "error" &&
+      next !== "idle"
+    ) {
+      stageStartTime = Date.now();
+      lastProgressTime = Date.now();
+      elapsedStageSec.value = 0;
     }
   },
 );
@@ -249,6 +305,7 @@ watch(routeSemitones, async (next) => {
     clearTimeout(autoRetryTimer);
     autoRetryTimer = null;
   }
+  stopStallWatchdog();
   // Clear stale melody — PitchDiagram captures props.melody at setup, so if it
   // mounts with a melody from a previous semitones value, the target line stays
   // wrong even after loadDoneArtifacts replaces player.melody. Forcing null gates
@@ -310,6 +367,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (navTimer !== null) clearTimeout(navTimer);
   if (autoRetryTimer !== null) clearTimeout(autoRetryTimer);
+  stopStallWatchdog();
 });
 </script>
 
@@ -394,6 +452,7 @@ onUnmounted(() => {
               <ProcessingStatus
                 :status="player.jobStatus"
                 :message="player.jobMessage"
+                :elapsed-stage-sec="elapsedStageSec"
               />
               <!-- Manual retry button: shown only after auto-retries are exhausted -->
               <button

@@ -15,7 +15,7 @@ import {
   type MelodyResponse,
   type JobStatusName,
 } from "@/services/api";
-import { withRetry } from "@/lib/retryPolicy";
+import { withRetry, retryPolicy } from "@/lib/retryPolicy";
 import { hzToMidi } from "@/utils/pitch";
 
 type PlayerMode = "idle" | "preview" | "preview-shift" | "full";
@@ -212,6 +212,9 @@ export const usePlayerStore = defineStore("player", () => {
    * Trigger Demucs + CREPE on the 30s preview clip, then fetch the preview melody.
    * Blocks ~14s warm-server / ~50s cold-server. Idempotent on the backend, so safe to call multiple times.
    * Once complete, swaps audioSrc to the clean instrumental stem URL.
+   *
+   * Each attempt uses an AbortController with a deadline of retryPolicy.stallTimeoutMs.
+   * If the server goes silent for that long the fetch is aborted and withRetry retries.
    */
   async function loadPreviewStems(): Promise<void> {
     if (!videoId.value || !sig.value) return;
@@ -223,7 +226,16 @@ export const usePlayerStore = defineStore("player", () => {
     const vid = videoId.value;
     const s = sig.value;
     try {
-      await withRetry(() => triggerPreviewStems(vid, s));
+      await withRetry(() => {
+        const controller = new AbortController();
+        const stallTimer = setTimeout(
+          () => controller.abort(),
+          retryPolicy.stallTimeoutMs,
+        );
+        return triggerPreviewStems(vid, s, controller.signal).finally(() =>
+          clearTimeout(stallTimer),
+        );
+      });
       // Fetch melody at the current semitones (usually 0 on first load)
       previewMelody.value = await getPreviewMelody(vid, s, semitones.value);
       // Swap audio source from the legacy fast preview to the clean stem
