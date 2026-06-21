@@ -62,7 +62,7 @@ onUnmounted(() => {
         Sing any song. In your key.
       </p>
       <div class="w-full max-w-xl">
-        <SearchBar @submit="onSearchSubmit" />
+        <SearchBar :default-value="search.query" @submit="onSearchSubmit" />
       </div>
     </div>
 
@@ -76,7 +76,7 @@ onUnmounted(() => {
         cantus
       </button>
       <div class="mb-8">
-        <SearchBar @submit="onSearchSubmit" />
+        <SearchBar :default-value="search.query" @submit="onSearchSubmit" />
       </div>
 
       <!-- Loading skeleton on first fetch -->

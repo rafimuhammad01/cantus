@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import { ref } from "vue";
 
+const props = defineProps<{ defaultValue?: string }>();
 const emit = defineEmits<{ submit: [query: string] }>();
-const query = ref("");
+// Local state — re-initialized from defaultValue on each mount so the search
+// term persists when SearchView swaps between hero and results layouts.
+// Two-way binding to the store would re-toggle that layout on every keystroke
+// and steal focus mid-typing.
+const query = ref(props.defaultValue ?? "");
 
 function onSubmit() {
   const trimmed = query.value.trim();

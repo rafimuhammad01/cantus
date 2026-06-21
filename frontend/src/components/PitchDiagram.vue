@@ -387,6 +387,7 @@ function stopPlayAndSing(): void {
   props.audioEl.pause();
   pitchDetection.stop();
   pitchStore.setActive(false);
+  void releaseWakeLock();
 }
 
 async function togglePlayAndSing(): Promise<void> {
@@ -394,6 +395,7 @@ async function togglePlayAndSing(): Promise<void> {
     stopPlayAndSing();
   } else {
     await startPlayAndSing();
+    void acquireWakeLock();
   }
 }
 
@@ -402,12 +404,56 @@ function onEnded(): void {
   stopPlayAndSing();
 }
 
+// ─── Screen wake lock ─────────────────────────────────────────────────────────
+// Mic activity alone doesn't count as user interaction, so iOS/Android sleep
+// the screen mid-song. Hold a wake lock while play+sing is active. The lock
+// is auto-released when the tab hides, so re-acquire on visibilitychange if
+// we're still active.
+
+interface WakeLockSentinelLike {
+  release(): Promise<void>;
+  addEventListener(type: "release", listener: () => void): void;
+}
+
+let wakeLock: WakeLockSentinelLike | null = null;
+
+async function acquireWakeLock(): Promise<void> {
+  const nav = navigator as Navigator & {
+    wakeLock?: { request(type: "screen"): Promise<WakeLockSentinelLike> };
+  };
+  if (!nav.wakeLock) return; // unsupported (old iOS, Firefox without flag)
+  if (wakeLock) return;
+  try {
+    wakeLock = await nav.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => {
+      wakeLock = null;
+    });
+  } catch {
+    // Permission denied / page hidden at request time — non-fatal.
+  }
+}
+
+async function releaseWakeLock(): Promise<void> {
+  const lock = wakeLock;
+  wakeLock = null;
+  if (lock) await lock.release().catch(() => {});
+}
+
+function onVisibilityChange(): void {
+  // Tab returned to foreground while still play+singing → re-acquire the lock
+  // the OS dropped when we hid.
+  if (document.visibilityState === "visible" && pitchDetection.isActive.value) {
+    void acquireWakeLock();
+  }
+}
+
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 
 let resizeObserver: ResizeObserver | null = null;
 
 onMounted(() => {
   props.audioEl.addEventListener("ended", onEnded);
+  document.addEventListener("visibilitychange", onVisibilityChange);
   rafId = requestAnimationFrame(tick);
 
   const observeTarget = props.fill ? svgWrapEl.value : svgEl.value;
@@ -432,7 +478,10 @@ onMounted(() => {
   // parent. Re-arm the mic so the user doesn't have to hit Play & Sing again.
   if (!props.audioEl.paused) {
     void pitchDetection.start().then(() => {
-      if (!pitchDetection.error.value) pitchStore.setActive(true);
+      if (!pitchDetection.error.value) {
+        pitchStore.setActive(true);
+        void acquireWakeLock();
+      }
     });
   }
 });
@@ -440,9 +489,11 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (rafId !== null) cancelAnimationFrame(rafId);
   props.audioEl.removeEventListener("ended", onEnded);
+  document.removeEventListener("visibilitychange", onVisibilityChange);
   pitchDetection.stop();
   pitchStore.reset();
   resizeObserver?.disconnect();
+  void releaseWakeLock();
 });
 
 const isActive = computed(() => pitchDetection.isActive.value);
