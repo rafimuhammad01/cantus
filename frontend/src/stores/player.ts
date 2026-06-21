@@ -159,15 +159,30 @@ export const usePlayerStore = defineStore("player", () => {
     }
   }
 
+  // Race guard for setSemitones — if the user transposes twice quickly past the
+  // debounce, the second request must win regardless of HTTP completion order.
+  // Each call bumps the seq, aborts the prior in-flight request, and discards
+  // any response whose seq is no longer current before touching audioSrc.
+  let setSemitonesSeq = 0;
+  let setSemitonesAbort: AbortController | null = null;
+
   /** Fire /api/preview-shift and swap audioSrc to the returned blob. */
   async function setSemitones(n: number) {
     if (n === semitones.value) return;
+
+    const mySeq = ++setSemitonesSeq;
+    if (setSemitonesAbort) setSemitonesAbort.abort();
+    const controller = new AbortController();
+    setSemitonesAbort = controller;
+    const isStale = () => mySeq !== setSemitonesSeq;
 
     // Full-song mode (after generate): unchanged.
     if (mode.value === "full" && melody.value !== null) {
       semitones.value = n;
       setAudioSrc(audioURL(videoId.value, sig.value, n));
-      melody.value = await getMelody(videoId.value, sig.value, n);
+      const m = await getMelody(videoId.value, sig.value, n, controller.signal);
+      if (isStale()) return;
+      melody.value = m;
       return;
     }
 
@@ -178,12 +193,16 @@ export const usePlayerStore = defineStore("player", () => {
     // targetSeries at component setup would lock in the wrong target line.
     if (previewStemsReady.value) {
       try {
-        previewMelody.value = await getPreviewMelody(
+        const pm = await getPreviewMelody(
           videoId.value,
           sig.value,
           n,
+          controller.signal,
         );
+        if (isStale()) return;
+        previewMelody.value = pm;
       } catch {
+        if (isStale()) return;
         // Non-fatal — pitch diagram will just stale until next successful fetch
       }
     }
@@ -203,7 +222,14 @@ export const usePlayerStore = defineStore("player", () => {
     }
 
     // n≠0: fetch shifted preview blob (backend shifts clean stem when available)
-    const blob = await previewShift(videoId.value, sig.value, n);
+    let blob: Blob;
+    try {
+      blob = await previewShift(videoId.value, sig.value, n, controller.signal);
+    } catch (e) {
+      if (isStale()) return;
+      throw e;
+    }
+    if (isStale()) return;
     setAudioSrc(URL.createObjectURL(blob), true);
     mode.value = "preview-shift";
   }
@@ -274,9 +300,32 @@ export const usePlayerStore = defineStore("player", () => {
     });
   }
 
-  /** Kick off /api/generate. Caller drives the SSE via useSSE. */
-  async function startGenerate(): Promise<string> {
-    const resp = await apiGenerate(videoId.value, sig.value, semitones.value);
+  // Race guard for startGenerate — if the user transposes again on PlayView
+  // before the prior /api/generate POST resolves, we must NOT let the older
+  // response clobber jobId (which would point the SSE at the wrong job and
+  // play the wrong key). Returns null if superseded so callers skip startSSE.
+  let startGenerateSeq = 0;
+  let startGenerateAbort: AbortController | null = null;
+
+  /** Kick off /api/generate. Caller drives the SSE via useSSE. Returns null if a newer call superseded this one. */
+  async function startGenerate(): Promise<string | null> {
+    const mySeq = ++startGenerateSeq;
+    if (startGenerateAbort) startGenerateAbort.abort();
+    const controller = new AbortController();
+    startGenerateAbort = controller;
+    let resp;
+    try {
+      resp = await apiGenerate(
+        videoId.value,
+        sig.value,
+        semitones.value,
+        controller.signal,
+      );
+    } catch (e) {
+      if (mySeq !== startGenerateSeq) return null;
+      throw e;
+    }
+    if (mySeq !== startGenerateSeq) return null;
     jobId.value = resp.job_id;
     jobStatus.value = "queued";
     jobMessage.value = "";

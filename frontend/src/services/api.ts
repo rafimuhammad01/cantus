@@ -94,11 +94,13 @@ export async function previewShift(
   videoId: string,
   sig: string,
   semitones: number,
+  signal?: AbortSignal,
 ): Promise<Blob> {
   const resp = await fetch("/api/preview-shift", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ video_id: videoId, sig, semitones }),
+    signal,
   });
   await checkOk(resp);
   return resp.blob();
@@ -121,11 +123,13 @@ export async function generate(
   videoId: string,
   sig: string,
   semitones: number,
+  signal?: AbortSignal,
 ): Promise<GenerateResponse> {
   const resp = await fetch("/api/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ video_id: videoId, sig, semitones }),
+    signal,
   });
   await checkOk(resp);
   return resp.json() as Promise<GenerateResponse>;
@@ -135,8 +139,11 @@ export async function getMelody(
   videoId: string,
   sig: string,
   semitones: number,
+  signal?: AbortSignal,
 ): Promise<MelodyResponse> {
-  const resp = await fetch(`/api/melody/${videoId}/${semitones}?sig=${sig}`);
+  const resp = await fetch(`/api/melody/${videoId}/${semitones}?sig=${sig}`, {
+    signal,
+  });
   await checkOk(resp);
   return resp.json() as Promise<MelodyResponse>;
 }
@@ -201,9 +208,11 @@ export async function getPreviewMelody(
   videoId: string,
   sig: string,
   semitones: number,
+  signal?: AbortSignal,
 ): Promise<MelodyResponse> {
   const resp = await fetch(
     `/api/preview-melody/${videoId}/${semitones}?sig=${sig}`,
+    { signal },
   );
   await checkOk(resp);
   return resp.json() as Promise<MelodyResponse>;

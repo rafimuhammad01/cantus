@@ -206,7 +206,8 @@ function scheduleAutoRetry() {
     player.jobMessage = "";
     sse.close();
     try {
-      await player.startGenerate();
+      const jid = await player.startGenerate();
+      if (jid === null) return;
       startSSE();
     } catch {
       scheduleAutoRetry();
@@ -224,7 +225,8 @@ function onManualRetry() {
   sse.close();
   void (async () => {
     try {
-      await player.startGenerate();
+      const jid = await player.startGenerate();
+      if (jid === null) return;
       startSSE();
     } catch (e) {
       player.applyStatus("error", String(e));
@@ -312,7 +314,8 @@ watch(routeSemitones, async (next) => {
   // PitchDiagram on the fresh fetch.
   player.melody = null;
   try {
-    await player.startGenerate();
+    const jid = await player.startGenerate();
+    if (jid === null) return; // superseded by a newer transpose; let the newer call drive the SSE
     startSSE();
   } catch (e) {
     player.applyStatus("error", String(e));
@@ -355,7 +358,8 @@ onMounted(() => {
     player.melody = null;
     (async () => {
       try {
-        await player.startGenerate();
+        const jid = await player.startGenerate();
+        if (jid === null) return;
         startSSE();
       } catch (e) {
         player.applyStatus("error", String(e));
