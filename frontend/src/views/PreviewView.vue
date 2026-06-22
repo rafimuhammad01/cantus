@@ -4,7 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { usePlayerStore } from "@/stores/player";
 import { useSearchStore } from "@/stores/search";
 import { shortKey, transposeKey } from "@/utils/key";
-import { midiToNoteName, hzToMidi } from "@/utils/pitch";
+import { midiToNoteName } from "@/utils/pitch";
 import KeySelector from "@/components/KeySelector.vue";
 import VocalOctaveSelector from "@/components/VocalOctaveSelector.vue";
 import AudioPlayer from "@/components/AudioPlayer.vue";
@@ -81,29 +81,8 @@ const noContext = computed(
   () => !player.videoId || player.videoId !== routeVideoId.value,
 );
 
-// Display key comes only from /api/preview-key, which re-reads melody.json's
-// key (CREPE on isolated full-song vocals). When the full song hasn't been
-// generated the endpoint returns "" and the KEY label hides.
-const displayKey = computed(() => player.previewKey || null);
-
-// Voice range follows the same rule as the key: only show when the full song
-// has been analyzed. We derive it from player.melody (CREPE on full vocals)
-// rather than player.vocalRange (which falls back to the 30s previewMelody)
-// so that we don't display a range computed from too little audio.
-const fullVocalRange = computed<{ minMidi: number; maxMidi: number } | null>(
-  () => {
-    if (!player.melody) return null;
-    const voiced = player.melody.frames
-      .filter(([, hz]) => hz > 0)
-      .map(([, hz]) => hzToMidi(hz));
-    if (voiced.length === 0) return null;
-    const shift = player.vocalOctaveShift;
-    return {
-      minMidi: Math.round(Math.min(...voiced) + shift),
-      maxMidi: Math.round(Math.max(...voiced) + shift),
-    };
-  },
-);
+// Stable key — uses originalMelody when available, falls back to previewKey.
+const displayKey = computed(() => player.displayOriginalKey);
 
 const shiftPending = ref(false);
 // Pending semitones — updates instantly on click for snappy UI feedback.
@@ -187,9 +166,11 @@ onMounted(() => {
   // loadPreviewKey reads melody.json's key via /api/preview-key when the song
   // has been generated previously; returns "" otherwise so the KEY label hides.
   void player.loadPreviewKey();
+  // loadOriginalMelody fetches the semitones=0 melody for stable KEY/RANGE display.
+  void player.loadOriginalMelody();
   // loadFullMelodyIfAvailable tries /api/melody and 404s silently if the song
-  // hasn't been generated. When it succeeds, player.melody populates and the
-  // VOICE range subtitle below renders — same gating rule as the KEY label.
+  // hasn't been generated. When it succeeds, player.melody populates for the
+  // existing PitchDiagram path.
   void player.loadFullMelodyIfAvailable();
   void player.loadPreviewStems();
   // Fire prewarm in the background so stages 1–3 complete before the user clicks
@@ -254,8 +235,8 @@ onUnmounted(() => {
           :current="player.vocalOctaveShift"
           :disabled="!player.previewStemsReady"
           :range="
-            fullVocalRange
-              ? `${midiToNoteName(fullVocalRange.minMidi)} – ${midiToNoteName(fullVocalRange.maxMidi)}`
+            player.displayVocalRange
+              ? `${midiToNoteName(player.displayVocalRange.minMidi)} – ${midiToNoteName(player.displayVocalRange.maxMidi)}`
               : undefined
           "
           @change="player.setVocalOctaveShift"

@@ -6,7 +6,7 @@ import { useSearchStore } from "@/stores/search";
 import { useSSE } from "@/composables/useSSE";
 import { statusURL, audioURL, getMelody } from "@/services/api";
 import { shortKey, transposeKey } from "@/utils/key";
-import { midiToNoteName, hzToMidi } from "@/utils/pitch";
+import { midiToNoteName } from "@/utils/pitch";
 import KeySelector from "@/components/KeySelector.vue";
 import VocalOctaveSelector from "@/components/VocalOctaveSelector.vue";
 import AudioPlayer from "@/components/AudioPlayer.vue";
@@ -132,24 +132,6 @@ const noContext = computed(
 );
 
 const isDone = computed(() => player.jobStatus === "done");
-
-// Voice range comes only from the full melody. player.vocalRange falls back to
-// the 30s previewMelody when the full melody isn't loaded, which would leak
-// the preview-clip range into PlayView while a generate is still running.
-const fullVocalRange = computed<{ minMidi: number; maxMidi: number } | null>(
-  () => {
-    if (!player.melody) return null;
-    const voiced = player.melody.frames
-      .filter(([, hz]) => hz > 0)
-      .map(([, hz]) => hzToMidi(hz));
-    if (voiced.length === 0) return null;
-    const shift = player.vocalOctaveShift;
-    return {
-      minMidi: Math.round(Math.min(...voiced) + shift),
-      maxMidi: Math.round(Math.max(...voiced) + shift),
-    };
-  },
-);
 
 const fullAudioSrc = computed(() =>
   player.videoId && player.sig
@@ -292,6 +274,7 @@ function onSemitonesChange(n: number) {
 // On route param change (user transposed → URL changed), kick a new generate.
 watch(routeSemitones, async (next) => {
   if (noContext.value) return;
+  void player.loadOriginalMelody();
   // Sync pending (catches direct URL edits / browser back-forward)
   pendingSemitones.value = next;
   // Ensure store semitones matches URL
@@ -331,6 +314,7 @@ onMounted(() => {
   // If we already have a jobId from PreviewView, just open the SSE.
   // Otherwise kick a generate.
   player.semitones = routeSemitones.value;
+  void player.loadOriginalMelody();
   if (
     player.jobId &&
     (player.jobStatus === "queued" ||
@@ -420,11 +404,15 @@ onUnmounted(() => {
         <KeySelector
           :semitones="pendingSemitones"
           :original-key="
-            player.originalKey ? shortKey(player.originalKey) : undefined
+            player.displayOriginalKey
+              ? shortKey(player.displayOriginalKey)
+              : undefined
           "
           :transposed-key="
-            player.originalKey
-              ? shortKey(transposeKey(player.originalKey, pendingSemitones))
+            player.displayOriginalKey
+              ? shortKey(
+                  transposeKey(player.displayOriginalKey, pendingSemitones),
+                )
               : undefined
           "
           @change="onSemitonesChange"
@@ -433,8 +421,8 @@ onUnmounted(() => {
           :current="player.vocalOctaveShift"
           :disabled="player.jobStatus !== 'done'"
           :range="
-            fullVocalRange
-              ? `${midiToNoteName(fullVocalRange.minMidi)} – ${midiToNoteName(fullVocalRange.maxMidi)}`
+            player.displayVocalRange
+              ? `${midiToNoteName(player.displayVocalRange.minMidi)} – ${midiToNoteName(player.displayVocalRange.maxMidi)}`
               : undefined
           "
           @change="player.setVocalOctaveShift"

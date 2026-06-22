@@ -103,6 +103,10 @@ export const usePlayerStore = defineStore("player", () => {
   const melody = ref<MelodyResponse | null>(null);
   const originalKey = computed(() => melody.value?.key ?? null);
 
+  // Stable original melody at semitones=0 — survives re-generates so KEY label
+  // and VOICE range stay visible while a new generate is running.
+  const originalMelody = ref<MelodyResponse | null>(null);
+
   // Generate job
   const jobId = ref<string | null>(null);
   const jobStatus = ref<JobStatusName | "idle">("idle");
@@ -137,6 +141,7 @@ export const usePlayerStore = defineStore("player", () => {
     previewStemsLoading.value = false;
     previewStemsError.value = "";
     melody.value = null;
+    originalMelody.value = null;
     jobId.value = null;
     jobStatus.value = "idle";
     jobMessage.value = "";
@@ -292,6 +297,43 @@ export const usePlayerStore = defineStore("player", () => {
     }
   }
 
+  /**
+   * Fetch the melody at semitones=0 and store it as the stable originalMelody.
+   * Idempotent — no-ops if already loaded. Swallows errors (404 = not generated yet).
+   */
+  async function loadOriginalMelody(): Promise<void> {
+    if (!videoId.value || !sig.value) return;
+    if (originalMelody.value !== null) return;
+    try {
+      originalMelody.value = await getMelody(videoId.value, sig.value, 0);
+    } catch {
+      // Non-fatal — key/range display will fall back to previewKey.
+    }
+  }
+
+  // Stable key label — uses originalMelody when available, falls back to previewKey.
+  const displayOriginalKey = computed<string | null>(
+    () => originalMelody.value?.key ?? previewKey.value ?? null,
+  );
+
+  // Stable voice range — derived from originalMelody frames at semitones=0,
+  // then math-shifted by current semitones + vocalOctaveShift.
+  const displayVocalRange = computed<{
+    minMidi: number;
+    maxMidi: number;
+  } | null>(() => {
+    if (!originalMelody.value) return null;
+    const voiced = originalMelody.value.frames
+      .filter(([, hz]) => hz > 0)
+      .map(([, hz]) => hzToMidi(hz));
+    if (voiced.length === 0) return null;
+    const shift = semitones.value + vocalOctaveShift.value;
+    return {
+      minMidi: Math.round(Math.min(...voiced) + shift),
+      maxMidi: Math.round(Math.max(...voiced) + shift),
+    };
+  });
+
   /** Fire-and-forget /api/prewarm. No UI state — purely a background optimization. */
   function startPrewarm(vid: string, s: string): void {
     if (!vid || !s) return;
@@ -373,6 +415,10 @@ export const usePlayerStore = defineStore("player", () => {
     previewStemsError,
     melody,
     originalKey,
+    originalMelody,
+    displayOriginalKey,
+    displayVocalRange,
+    loadOriginalMelody,
     jobId,
     jobStatus,
     jobMessage,
