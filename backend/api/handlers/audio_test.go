@@ -75,7 +75,7 @@ func TestAudioHandler(t *testing.T) {
 			name: "happy path cache hit semitones=-2",
 			url:  "/api/audio/" + validID + "/-2?sig=" + validSig,
 			setup: func(t *testing.T, st *services.LocalDiskStorage) {
-				mustStage(t, st, validID, "shifted/-2/audio.mp3", []byte("fake mp3 bytes"))
+				mustStage(t, st, validID, "shifted/-2/audio.wav", []byte("fake mp3 bytes"))
 			},
 			wantStatus: http.StatusOK,
 			wantBody:   "fake mp3 bytes",
@@ -84,7 +84,7 @@ func TestAudioHandler(t *testing.T) {
 			name: "happy path semitones=0",
 			url:  "/api/audio/" + validID + "/0?sig=" + validSig,
 			setup: func(t *testing.T, st *services.LocalDiskStorage) {
-				mustStage(t, st, validID, "shifted/0/audio.mp3", []byte("zero semitones"))
+				mustStage(t, st, validID, "shifted/0/audio.wav", []byte("zero semitones"))
 			},
 			wantStatus: http.StatusOK,
 			wantBody:   "zero semitones",
@@ -93,7 +93,7 @@ func TestAudioHandler(t *testing.T) {
 			name: "happy path semitones=+5",
 			url:  "/api/audio/" + validID + "/5?sig=" + validSig,
 			setup: func(t *testing.T, st *services.LocalDiskStorage) {
-				mustStage(t, st, validID, "shifted/5/audio.mp3", []byte("plus five"))
+				mustStage(t, st, validID, "shifted/5/audio.wav", []byte("plus five"))
 			},
 			wantStatus: http.StatusOK,
 			wantBody:   "plus five",
@@ -199,7 +199,7 @@ func TestAudioHandler_RangeRequest(t *testing.T) {
 			for i := range content {
 				content[i] = byte(i)
 			}
-			mustStage(t, st, validID, "shifted/0/audio.mp3", content)
+			mustStage(t, st, validID, "shifted/0/audio.wav", content)
 
 			router := audioRouter(signer, st)
 

@@ -189,7 +189,7 @@ func TestJobRunner_Run(t *testing.T) {
 				"vocals.wav",
 				"no_vocals.wav",
 				"melody.json",
-				"shifted/-2/audio.mp3",
+				"shifted/-2/audio.wav",
 			},
 			wantStatus:        models.StatusDone,
 			wantDownloadCalls: 0,
@@ -227,7 +227,7 @@ func TestJobRunner_Run(t *testing.T) {
 				"vocals.wav",
 				"no_vocals.wav",
 				"melody.json",
-				"shifted/-2/audio.mp3",
+				"shifted/-2/audio.wav",
 			},
 			wantStatus:        models.StatusDone,
 			wantDownloadCalls: 0,
@@ -385,12 +385,12 @@ func TestJobRunner_Run(t *testing.T) {
 
 			// On success, verify shifted file is in cache.
 			if tt.wantStatus == models.StatusDone && tt.writeShiftFile {
-				has, err := storage.Has(ctx, storage.Key(videoID, "shifted/-2/audio.mp3"))
+				has, err := storage.Has(ctx, storage.Key(videoID, "shifted/-2/audio.wav"))
 				if err != nil {
-					t.Fatalf("storage.Has(shifted/-2/audio.mp3): %v", err)
+					t.Fatalf("storage.Has(shifted/-2/audio.wav): %v", err)
 				}
 				if !has {
-					t.Error("shifted/-2/audio.mp3 not found in cache after successful run")
+					t.Error("shifted/-2/audio.wav not found in cache after successful run")
 				}
 			}
 		})

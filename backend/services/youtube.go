@@ -123,7 +123,7 @@ func (s *PythonYouTubeService) runWithStallDetector(ctx context.Context, outPath
 }
 
 // DownloadPreview downloads the first 30 seconds of audio for videoID via yt-dlp
-// and commits it to storage under the name "preview.mp3". It returns an error if
+// and commits it to storage under the name "preview.wav". It returns an error if
 // videoID is invalid, yt-dlp fails, or storage.Commit fails.
 func (s *PythonYouTubeService) DownloadPreview(ctx context.Context, videoID string) error {
 	if err := ctx.Err(); err != nil {
@@ -140,11 +140,11 @@ func (s *PythonYouTubeService) DownloadPreview(ctx context.Context, videoID stri
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	outPath := filepath.Join(tmpDir, "preview.mp3")
+	outPath := filepath.Join(tmpDir, "preview.wav")
 
 	args := append(s.botGateArgs(), []string{
 		"--download-sections", "*0-30",
-		"-x", "--audio-format", "mp3",
+		"-x", "--audio-format", "wav",
 		"-o", outPath,
 		"--quiet", "--no-warnings",
 		"--", // guards against videoIDs that could be interpreted as flags
@@ -155,7 +155,7 @@ func (s *PythonYouTubeService) DownloadPreview(ctx context.Context, videoID stri
 		return fmt.Errorf("download preview: yt-dlp: %w", err)
 	}
 
-	if err := s.storage.Commit(ctx, s.storage.Key(videoID, "preview.mp3"), outPath); err != nil {
+	if err := s.storage.Commit(ctx, s.storage.Key(videoID, "preview.wav"), outPath); err != nil {
 		return fmt.Errorf("download preview: commit: %w", err)
 	}
 

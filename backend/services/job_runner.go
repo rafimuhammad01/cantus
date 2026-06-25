@@ -338,7 +338,7 @@ func (r *JobRunner) runShift(ctx context.Context, jobID, videoID string, semiton
 	}
 
 	r.update(jobID, models.StatusShifting, "shifting instrumental to your key")
-	shiftedName := "shifted/" + strconv.Itoa(semitones) + "/audio.mp3"
+	shiftedName := "shifted/" + strconv.Itoa(semitones) + "/audio.wav"
 	shiftedKey := r.storage.Key(videoID, shiftedName)
 	shiftedHas, _ := r.storage.Has(ctx, shiftedKey)
 	if !shiftedHas {
@@ -365,7 +365,7 @@ func (r *JobRunner) runShift(ctx context.Context, jobID, videoID string, semiton
 		_ = scratchIn.Close()
 		defer func() { _ = os.Remove(scratchIn.Name()) }()
 
-		scratchOut, err := os.CreateTemp("", "cantus-shift-out-*.mp3")
+		scratchOut, err := os.CreateTemp("", "cantus-shift-out-*.wav")
 		if err != nil {
 			failAndRecord("tempfile out: " + err.Error())
 			return

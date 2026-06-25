@@ -13,7 +13,7 @@ import (
 	"cantus/backend/services"
 )
 
-// Audio returns an http.HandlerFunc that serves the cached pitch-shifted full instrumental MP3.
+// Audio returns an http.HandlerFunc that serves the cached pitch-shifted full instrumental WAV.
 func Audio(signer *services.Signer, storage services.Storage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		videoID := chi.URLParam(r, "videoId")
@@ -41,7 +41,7 @@ func Audio(signer *services.Signer, storage services.Storage) http.HandlerFunc {
 
 		ctx := r.Context()
 		log := logger.FromCtx(ctx)
-		name := "shifted/" + strconv.Itoa(semitones) + "/audio.mp3"
+		name := "shifted/" + strconv.Itoa(semitones) + "/audio.wav"
 		key := storage.Key(videoID, name)
 
 		ok, err := storage.Has(ctx, key)
@@ -77,6 +77,6 @@ func Audio(signer *services.Signer, storage services.Storage) http.HandlerFunc {
 			return
 		}
 
-		http.ServeContent(w, r, "audio.mp3", time.Now(), bytes.NewReader(buf))
+		http.ServeContent(w, r, "audio.wav", time.Now(), bytes.NewReader(buf))
 	}
 }

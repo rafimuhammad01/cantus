@@ -17,7 +17,7 @@ import (
 )
 
 // fakeStemsProcessor is a test double for services.ProcessorClient used in
-// preview_stems tests for Stage 2 (Separate) and Stage 4 (Melody via URL handoff).
+// preview_stems tests for Stage 2 (Separate) and Stage 3 (Melody via URL handoff).
 type fakeStemsProcessor struct {
 	separateErr   error
 	separateCount int
@@ -113,30 +113,16 @@ func stemsRouter(
 	storage services.Storage,
 	yt services.YouTubeService,
 	processor services.ProcessorClient,
-	transcode services.TranscodeFunc,
 ) *chi.Mux {
 	r := chi.NewRouter()
-	r.Post("/api/preview-stems", handlers.PreviewStems(signer, storage, yt, processor, transcode, services.NewVideoFailureTracker(), nil))
+	r.Post("/api/preview-stems", handlers.PreviewStems(signer, storage, yt, processor, services.NewVideoFailureTracker(), nil))
 	return r
 }
 
-// fakeTranscode writes a fixed sentinel into outputPath. It records whether it was called.
-func makeFakeTranscode(writeContent []byte, err error) (services.TranscodeFunc, *int) {
-	count := new(int)
-	fn := func(_ context.Context, _, outputPath string) error {
-		*count++
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(outputPath, writeContent, 0o644)
-	}
-	return fn, count
-}
-
-// preStagePreview writes a dummy preview.mp3 into storage for the given videoID.
+// preStagePreview writes a dummy preview.wav into storage for the given videoID.
 func preStagePreview(t *testing.T, st *services.LocalDiskStorage, videoID string) {
 	t.Helper()
-	commitToStorage(t, st, st.Key(videoID, "preview.mp3"), []byte("fake preview bytes"))
+	commitToStorage(t, st, st.Key(videoID, "preview.wav"), []byte("fake preview bytes"))
 }
 
 // preStageStems writes dummy vocals.wav + no_vocals.wav into storage.
@@ -145,12 +131,6 @@ func preStageStems(t *testing.T, st *services.LocalDiskStorage, videoID string) 
 	for _, name := range []string{"preview-stems/vocals.wav", "preview-stems/no_vocals.wav"} {
 		commitToStorage(t, st, st.Key(videoID, name), []byte("fake wav"))
 	}
-}
-
-// preStageMp3 writes a dummy no_vocals.mp3 into storage.
-func preStageMp3(t *testing.T, st *services.LocalDiskStorage, videoID string) {
-	t.Helper()
-	commitToStorage(t, st, st.Key(videoID, "preview-stems/no_vocals.mp3"), []byte("fake mp3"))
 }
 
 // preStageMelody writes a dummy melody.json into storage.
@@ -197,15 +177,14 @@ func TestPreviewStemsHandler(t *testing.T) {
 		name string
 		body string
 
-		// setup returns storage, fake yt, fake gpu, fake transcode.
-		setup func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor, services.TranscodeFunc, *int)
+		// setup returns storage, fake yt, fake gpu.
+		setup func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor)
 
 		wantStatus       int
 		wantBodyContains string
 		wantReady        bool
 		wantDownload     int
 		wantSeparate     int
-		wantTranscode    int
 		wantMelody       int
 		// names to assert are cached after a successful request
 		wantCached []string
@@ -213,7 +192,7 @@ func TestPreviewStemsHandler(t *testing.T) {
 		{
 			name: "happy path, cold cache — all stages run",
 			body: stemBody(validID, validSig),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor, services.TranscodeFunc, *int) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor) {
 				st := newStemsStorage(t)
 				yt := &fakeYouTubeStems{
 					onDownload: func(videoID string) {
@@ -228,65 +207,57 @@ func TestPreviewStemsHandler(t *testing.T) {
 						commitMelodyToStorage(t, st, validID)
 					},
 				}
-				transcode, count := makeFakeTranscode([]byte("fake mp3"), nil)
-				return st, yt, gpu, transcode, count
+				return st, yt, gpu
 			},
-			wantStatus:    http.StatusOK,
-			wantReady:     true,
-			wantDownload:  1,
-			wantSeparate:  1,
-			wantTranscode: 1,
-			wantMelody:    1,
-			wantCached:    []string{"preview-stems/no_vocals.mp3", "preview-stems/melody.json"},
+			wantStatus:   http.StatusOK,
+			wantReady:    true,
+			wantDownload: 1,
+			wantSeparate: 1,
+			wantMelody:   1,
+			wantCached:   []string{"preview-stems/no_vocals.wav", "preview-stems/melody.json"},
 		},
 		{
 			name: "idempotent — all artifacts cached, no upstream calls",
 			body: stemBody(validID, validSig),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor, services.TranscodeFunc, *int) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor) {
 				st := newStemsStorage(t)
 				preStagePreview(t, st, validID)
 				preStageStems(t, st, validID)
-				preStageMp3(t, st, validID)
 				preStageMelody(t, st, validID)
-				transcode, count := makeFakeTranscode(nil, nil)
-				return st, &fakeYouTubeStems{}, &fakeStemsProcessor{}, transcode, count
+				return st, &fakeYouTubeStems{}, &fakeStemsProcessor{}
 			},
-			wantStatus:    http.StatusOK,
-			wantReady:     true,
-			wantDownload:  0,
-			wantSeparate:  0,
-			wantTranscode: 0,
-			wantMelody:    0,
+			wantStatus:   http.StatusOK,
+			wantReady:    true,
+			wantDownload: 0,
+			wantSeparate: 0,
+			wantMelody:   0,
 		},
 		{
 			name: "partial cache — vocals.wav present but melody.json absent — Demucs skipped, Melody runs",
 			body: stemBody(validID, validSig),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor, services.TranscodeFunc, *int) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor) {
 				st := newStemsStorage(t)
 				preStagePreview(t, st, validID)
 				preStageStems(t, st, validID)
-				preStageMp3(t, st, validID)
 				// melody.json intentionally absent
 				gpu := &fakeStemsProcessor{
 					onMelody: func() {
 						commitMelodyToStorage(t, st, validID)
 					},
 				}
-				transcode, count := makeFakeTranscode(nil, nil)
-				return st, &fakeYouTubeStems{}, gpu, transcode, count
+				return st, &fakeYouTubeStems{}, gpu
 			},
-			wantStatus:    http.StatusOK,
-			wantReady:     true,
-			wantDownload:  0,
-			wantSeparate:  0,
-			wantTranscode: 0,
-			wantMelody:    1,
-			wantCached:    []string{"preview-stems/melody.json"},
+			wantStatus:   http.StatusOK,
+			wantReady:    true,
+			wantDownload: 0,
+			wantSeparate: 0,
+			wantMelody:   1,
+			wantCached:   []string{"preview-stems/melody.json"},
 		},
 		{
 			name: "partial cache — preview exists, stems absent — Demucs runs",
 			body: stemBody(validID, validSig),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor, services.TranscodeFunc, *int) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor) {
 				st := newStemsStorage(t)
 				preStagePreview(t, st, validID)
 				// no stems cached
@@ -298,22 +269,19 @@ func TestPreviewStemsHandler(t *testing.T) {
 						commitMelodyToStorage(t, st, validID)
 					},
 				}
-				transcode, count := makeFakeTranscode([]byte("fake mp3"), nil)
-				return st, &fakeYouTubeStems{}, gpu, transcode, count
+				return st, &fakeYouTubeStems{}, gpu
 			},
-			wantStatus:    http.StatusOK,
-			wantReady:     true,
-			wantDownload:  0,
-			wantSeparate:  1,
-			wantTranscode: 1,
-			wantMelody:    1,
+			wantStatus:   http.StatusOK,
+			wantReady:    true,
+			wantDownload: 0,
+			wantSeparate: 1,
+			wantMelody:   1,
 		},
 		{
 			name: "400 — malformed JSON body",
 			body: "not json",
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor, services.TranscodeFunc, *int) {
-				transcode, count := makeFakeTranscode(nil, nil)
-				return newStemsStorage(t), &fakeYouTubeStems{}, &fakeStemsProcessor{}, transcode, count
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor) {
+				return newStemsStorage(t), &fakeYouTubeStems{}, &fakeStemsProcessor{}
 			},
 			wantStatus:       http.StatusBadRequest,
 			wantBodyContains: "invalid request body",
@@ -321,9 +289,8 @@ func TestPreviewStemsHandler(t *testing.T) {
 		{
 			name: "400 — invalid videoId",
 			body: `{"video_id":"bad/slash!!","sig":"anything"}`,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor, services.TranscodeFunc, *int) {
-				transcode, count := makeFakeTranscode(nil, nil)
-				return newStemsStorage(t), &fakeYouTubeStems{}, &fakeStemsProcessor{}, transcode, count
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor) {
+				return newStemsStorage(t), &fakeYouTubeStems{}, &fakeStemsProcessor{}
 			},
 			wantStatus:       http.StatusBadRequest,
 			wantBodyContains: "invalid videoId",
@@ -331,9 +298,8 @@ func TestPreviewStemsHandler(t *testing.T) {
 		{
 			name: `400 — invalid sig`,
 			body: `{"video_id":"` + validID + `","sig":"deadbeef"}`,
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor, services.TranscodeFunc, *int) {
-				transcode, count := makeFakeTranscode(nil, nil)
-				return newStemsStorage(t), &fakeYouTubeStems{}, &fakeStemsProcessor{}, transcode, count
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor) {
+				return newStemsStorage(t), &fakeYouTubeStems{}, &fakeStemsProcessor{}
 			},
 			wantStatus:       http.StatusBadRequest,
 			wantBodyContains: "invalid sig",
@@ -341,11 +307,10 @@ func TestPreviewStemsHandler(t *testing.T) {
 		{
 			name: "200 streaming — DownloadPreview failure",
 			body: stemBody(validID, validSig),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor, services.TranscodeFunc, *int) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor) {
 				st := newStemsStorage(t)
 				yt := &fakeYouTubeStems{err: errors.New("yt-dlp died")}
-				transcode, count := makeFakeTranscode(nil, nil)
-				return st, yt, &fakeStemsProcessor{}, transcode, count
+				return st, yt, &fakeStemsProcessor{}
 			},
 			wantStatus:       http.StatusOK,
 			wantBodyContains: "download failed",
@@ -354,43 +319,25 @@ func TestPreviewStemsHandler(t *testing.T) {
 		{
 			name: "200 streaming — Separate failure",
 			body: stemBody(validID, validSig),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor, services.TranscodeFunc, *int) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor) {
 				st := newStemsStorage(t)
 				preStagePreview(t, st, validID)
 				gpu := &fakeStemsProcessor{separateErr: errors.New("demucs crashed")}
-				transcode, count := makeFakeTranscode(nil, nil)
-				return st, &fakeYouTubeStems{}, gpu, transcode, count
+				return st, &fakeYouTubeStems{}, gpu
 			},
 			wantStatus:       http.StatusOK,
 			wantBodyContains: "separate failed",
 			wantSeparate:     services.PipelineRetryAttempts,
 		},
 		{
-			name: "200 streaming — Transcode failure",
-			body: stemBody(validID, validSig),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor, services.TranscodeFunc, *int) {
-				st := newStemsStorage(t)
-				preStagePreview(t, st, validID)
-				preStageStems(t, st, validID)
-				transcode, count := makeFakeTranscode(nil, errors.New("ffmpeg not found"))
-				return st, &fakeYouTubeStems{}, &fakeStemsProcessor{}, transcode, count
-			},
-			wantStatus:       http.StatusOK,
-			wantBodyContains: "transcode failed",
-			// Transcode is now wrapped in Retry(PipelineRetryAttempts=3), so all 3 attempts fire.
-			wantTranscode: services.PipelineRetryAttempts,
-		},
-		{
 			name: "200 streaming — Melody failure",
 			body: stemBody(validID, validSig),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor, services.TranscodeFunc, *int) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor) {
 				st := newStemsStorage(t)
 				preStagePreview(t, st, validID)
 				preStageStems(t, st, validID)
-				preStageMp3(t, st, validID)
 				gpu := &fakeStemsProcessor{melodyErr: errors.New("crepe exploded")}
-				transcode, count := makeFakeTranscode(nil, nil)
-				return st, &fakeYouTubeStems{}, gpu, transcode, count
+				return st, &fakeYouTubeStems{}, gpu
 			},
 			wantStatus:       http.StatusOK,
 			wantBodyContains: "melody failed",
@@ -399,12 +346,11 @@ func TestPreviewStemsHandler(t *testing.T) {
 		{
 			name: "500 — storage.Has failure",
 			body: stemBody(validID, validSig),
-			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor, services.TranscodeFunc, *int) {
+			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor) {
 				real := newStemsStorage(t)
-				// Fail on the first Has call (no_vocals.mp3 check) — this is in Phase 2 (pre-streaming).
-				st := &errStorage{Storage: real, errOnHasName: "preview-stems/no_vocals.mp3"}
-				transcode, count := makeFakeTranscode(nil, nil)
-				return st, &fakeYouTubeStems{}, &fakeStemsProcessor{}, transcode, count
+				// Fail on the first Has call (no_vocals.wav check) — this is in Phase 2 (pre-streaming).
+				st := &errStorage{Storage: real, errOnHasName: "preview-stems/no_vocals.wav"}
+				return st, &fakeYouTubeStems{}, &fakeStemsProcessor{}
 			},
 			wantStatus:       http.StatusInternalServerError,
 			wantBodyContains: "storage check failed",
@@ -413,8 +359,8 @@ func TestPreviewStemsHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			st, yt, gpu, transcode, transcodeCount := tt.setup(t)
-			router := stemsRouter(signer, st, yt, gpu, transcode)
+			st, yt, gpu := tt.setup(t)
+			router := stemsRouter(signer, st, yt, gpu)
 
 			req := httptest.NewRequest(http.MethodPost, "/api/preview-stems", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
@@ -446,10 +392,6 @@ func TestPreviewStemsHandler(t *testing.T) {
 
 			if got, want := gpu.separateCount, tt.wantSeparate; got != want {
 				t.Errorf("Separate call count: got %d, want %d", got, want)
-			}
-
-			if got, want := *transcodeCount, tt.wantTranscode; got != want {
-				t.Errorf("Transcode call count: got %d, want %d", got, want)
 			}
 
 			if got, want := gpu.melodyCount, tt.wantMelody; got != want {

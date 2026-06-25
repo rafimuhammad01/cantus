@@ -114,8 +114,8 @@ func PreviewShift(
 		videoID := req.VideoID
 		n := req.Semitones
 
-		stemShiftedName := "preview-stems/shifted/" + strconv.Itoa(n) + ".mp3"
-		legacyShiftedName := "preview-shifts/" + strconv.Itoa(n) + ".mp3"
+		stemShiftedName := "preview-stems/shifted/" + strconv.Itoa(n) + ".wav"
+		legacyShiftedName := "preview-shifts/" + strconv.Itoa(n) + ".wav"
 
 		// Resolution order is load-bearing for the "no chipmunk" promise:
 		//   1. stem-shifted cache hit  → serve (clean, previously computed)
@@ -153,7 +153,7 @@ func PreviewShift(
 				inKey := storage.Key(videoID, "preview-stems/no_vocals.wav")
 				outKey := storage.Key(videoID, stemShiftedName)
 				doShift := func() error {
-					return shiftViaStorage(ctx, storage, shifter, inKey, outKey, ".wav", ".mp3", float64(n))
+					return shiftViaStorage(ctx, storage, shifter, inKey, outKey, ".wav", ".wav", float64(n))
 				}
 				var shiftErr error
 				if coord != nil {
@@ -187,7 +187,7 @@ func PreviewShift(
 
 		// Final fallback: still nothing? Run the legacy compute path (download + shift full mix).
 		if serveKey == "" {
-			previewHas, err := storage.Has(ctx, storage.Key(videoID, "preview.mp3"))
+			previewHas, err := storage.Has(ctx, storage.Key(videoID, "preview.wav"))
 			if err != nil {
 				log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("storage.Has (preview) failed")
 				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage check failed"})
@@ -202,13 +202,13 @@ func PreviewShift(
 				}
 			}
 
-			inKey := storage.Key(videoID, "preview.mp3")
+			inKey := storage.Key(videoID, "preview.wav")
 			outKey := storage.Key(videoID, legacyShiftedName)
 			// Use a negated semitone value as the dedup key to distinguish from the
 			// stem shift path (they produce different outputs for the same videoID+n).
 			legacyKey := -(n + 13)
 			doLegacyShift := func() error {
-				return shiftViaStorage(ctx, storage, shifter, inKey, outKey, ".mp3", ".mp3", float64(n))
+				return shiftViaStorage(ctx, storage, shifter, inKey, outKey, ".wav", ".wav", float64(n))
 			}
 			var legacyShiftErr error
 			if coord != nil {

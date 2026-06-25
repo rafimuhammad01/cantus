@@ -212,14 +212,14 @@ func TestPythonYouTubeService_DownloadPreview(t *testing.T) {
 				mustContainArg(t, args, "*0-30")
 				mustContainArg(t, args, "-x")
 				mustContainArg(t, args, "--audio-format")
-				mustContainArg(t, args, "mp3")
+				mustContainArg(t, args, "wav")
 
-				// -o must be followed by a path ending in preview.mp3.
+				// -o must be followed by a path ending in preview.wav.
 				oIdx := indexArg(args, "-o")
 				if oIdx < 0 || oIdx+1 >= len(args) {
 					t.Error("args: missing -o <path>")
-				} else if !strings.HasSuffix(args[oIdx+1], "preview.mp3") {
-					t.Errorf("args: -o path %q does not end in preview.mp3", args[oIdx+1])
+				} else if !strings.HasSuffix(args[oIdx+1], "preview.wav") {
+					t.Errorf("args: -o path %q does not end in preview.wav", args[oIdx+1])
 				}
 
 				// -- separator must appear before the URL.
@@ -251,7 +251,7 @@ func TestPythonYouTubeService_DownloadPreview(t *testing.T) {
 			}
 			if tt.wantCommitCount > 0 && len(store.committed) > 0 {
 				c := store.committed[0]
-				wantKey := tt.videoID + "/preview.mp3"
+				wantKey := tt.videoID + "/preview.wav"
 				if c.key != wantKey {
 					t.Errorf("Commit key: got %q, want %q", c.key, wantKey)
 				}

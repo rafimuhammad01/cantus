@@ -13,7 +13,7 @@ import (
 )
 
 // PreviewAudio returns an http.HandlerFunc that serves the cached preview-stems
-// no_vocals.mp3 (original-key, 30s). It takes no semitones param because the
+// no_vocals.wav (original-key, 30s). It takes no semitones param because the
 // preview audio is always the unshifted stem; shifted previews are served by the
 // existing /api/preview-shift endpoint. No auto-generate: /api/preview-stems is
 // the entry point and the frontend always calls it before this.
@@ -34,7 +34,7 @@ func PreviewAudio(signer *services.Signer, storage services.Storage) http.Handle
 		ctx := r.Context()
 		log := logger.FromCtx(ctx)
 
-		const name = "preview-stems/no_vocals.mp3"
+		const name = "preview-stems/no_vocals.wav"
 		key := storage.Key(videoID, name)
 
 		ok, err := storage.Has(ctx, key)
@@ -71,6 +71,6 @@ func PreviewAudio(signer *services.Signer, storage services.Storage) http.Handle
 			return
 		}
 
-		http.ServeContent(w, r, "no_vocals.mp3", time.Now(), bytes.NewReader(buf))
+		http.ServeContent(w, r, "no_vocals.wav", time.Now(), bytes.NewReader(buf))
 	}
 }
