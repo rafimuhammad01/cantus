@@ -49,8 +49,8 @@ def separate(req: SeparateRequest, service: SeparateServiceDep) -> Response:
                 service.separate(str(src), str(stems_dir))
             except RuntimeError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
-            vocals = stems_dir / "vocals.wav"
-            no_vocals = stems_dir / "no_vocals.wav"
+            vocals = stems_dir / "vocals.mp3"
+            no_vocals = stems_dir / "no_vocals.mp3"
             if not vocals.exists() or not no_vocals.exists():
                 raise HTTPException(status_code=500, detail="roformer did not produce both stems")
             await upload_from_path(vocals, req.vocals_output_url)

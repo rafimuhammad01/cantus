@@ -20,8 +20,8 @@ class _StubRoformer:
         if self._raise is not None:
             raise self._raise
         # Simulate Roformer writing both stems into output_dir.
-        Path(output_dir, "vocals.wav").write_bytes(b"VOCALS")
-        Path(output_dir, "no_vocals.wav").write_bytes(b"NO-VOCALS")
+        Path(output_dir, "vocals.mp3").write_bytes(b"VOCALS")
+        Path(output_dir, "no_vocals.mp3").write_bytes(b"NO-VOCALS")
 
 
 @pytest.fixture

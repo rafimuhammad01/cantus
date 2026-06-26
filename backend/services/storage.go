@@ -12,6 +12,10 @@ import (
 	"time"
 )
 
+// AudioExt is the on-disk extension for all cached audio artifacts.
+// Cache keys must always use this; serving handlers use it for ServeContent names.
+const AudioExt = ".mp3"
+
 // ErrObjectNotMaterialized is returned by Verify when the object is absent
 // or zero-byte. Used after a Python upload to confirm the PUT actually
 // landed before treating the cache entry as ready.

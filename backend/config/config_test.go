@@ -42,9 +42,6 @@ func TestLoad_HappyPath_WithDefaults(t *testing.T) {
 	if cfg.RubberbandPath != "rubberband" {
 		t.Errorf("RubberbandPath: got %q, want %q", cfg.RubberbandPath, "rubberband")
 	}
-	if cfg.FFmpegPath != "ffmpeg" {
-		t.Errorf("FFmpegPath: got %q, want %q", cfg.FFmpegPath, "ffmpeg")
-	}
 }
 
 // TestLoad_HappyPath_AllExplicit verifies that when every env var is set to a
@@ -60,7 +57,6 @@ func TestLoad_HappyPath_AllExplicit(t *testing.T) {
 	t.Setenv("PROCESSOR_URL", "http://proc:9991")
 	t.Setenv("PROCESSOR_TIMEOUT_SECONDS", "240")
 	t.Setenv("RUBBERBAND_PATH", "/usr/local/bin/rubberband")
-	t.Setenv("FFMPEG_PATH", "/usr/local/bin/ffmpeg")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -90,9 +86,6 @@ func TestLoad_HappyPath_AllExplicit(t *testing.T) {
 	}
 	if cfg.RubberbandPath != "/usr/local/bin/rubberband" {
 		t.Errorf("RubberbandPath: got %q, want %q", cfg.RubberbandPath, "/usr/local/bin/rubberband")
-	}
-	if cfg.FFmpegPath != "/usr/local/bin/ffmpeg" {
-		t.Errorf("FFmpegPath: got %q, want %q", cfg.FFmpegPath, "/usr/local/bin/ffmpeg")
 	}
 }
 
@@ -325,7 +318,6 @@ func TestLoad_processorConfig(t *testing.T) {
 		wantURL        string
 		wantTimeout    int
 		wantRubberband string
-		wantFFmpeg     string
 	}{
 		{
 			name:           "ProcessorURL defaults to PYTHON_PROCESSOR_URL when unset",
@@ -333,7 +325,6 @@ func TestLoad_processorConfig(t *testing.T) {
 			wantURL:        "http://py:9000",
 			wantTimeout:    180,
 			wantRubberband: "rubberband",
-			wantFFmpeg:     "ffmpeg",
 		},
 		{
 			name: "PROCESSOR_URL overrides PYTHON_PROCESSOR_URL",
@@ -344,7 +335,6 @@ func TestLoad_processorConfig(t *testing.T) {
 			wantURL:        "http://proc:8091",
 			wantTimeout:    180,
 			wantRubberband: "rubberband",
-			wantFFmpeg:     "ffmpeg",
 		},
 		{
 			name:           "timeout defaults to 180 when env unset",
@@ -352,7 +342,6 @@ func TestLoad_processorConfig(t *testing.T) {
 			wantURL:        "http://localhost:8090",
 			wantTimeout:    180,
 			wantRubberband: "rubberband",
-			wantFFmpeg:     "ffmpeg",
 		},
 		{
 			name: "timeout overrides via PROCESSOR_TIMEOUT_SECONDS",
@@ -362,18 +351,15 @@ func TestLoad_processorConfig(t *testing.T) {
 			wantURL:        "http://localhost:8090",
 			wantTimeout:    240,
 			wantRubberband: "rubberband",
-			wantFFmpeg:     "ffmpeg",
 		},
 		{
-			name: "binary paths override via RUBBERBAND_PATH and FFMPEG_PATH",
+			name: "binary path overrides via RUBBERBAND_PATH",
 			env: map[string]string{
 				"RUBBERBAND_PATH": "/opt/bin/rubberband",
-				"FFMPEG_PATH":     "/opt/bin/ffmpeg",
 			},
 			wantURL:        "http://localhost:8090",
 			wantTimeout:    180,
 			wantRubberband: "/opt/bin/rubberband",
-			wantFFmpeg:     "/opt/bin/ffmpeg",
 		},
 	}
 	for _, tc := range tests {
@@ -394,9 +380,6 @@ func TestLoad_processorConfig(t *testing.T) {
 			}
 			if cfg.RubberbandPath != tc.wantRubberband {
 				t.Errorf("RubberbandPath: got %q, want %q", cfg.RubberbandPath, tc.wantRubberband)
-			}
-			if cfg.FFmpegPath != tc.wantFFmpeg {
-				t.Errorf("FFmpegPath: got %q, want %q", cfg.FFmpegPath, tc.wantFFmpeg)
 			}
 		})
 	}

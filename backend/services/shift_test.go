@@ -30,35 +30,39 @@ func (r *recordingRunner) Run(_ context.Context, name string, args ...string) er
 func TestCLIShifter_Shift(t *testing.T) {
 	tests := []struct {
 		name      string
-		inExt     string
-		outExt    string
 		semitones float64
 		wantCalls []string // first token of each invocation, in order
-		wantPFlag string   // expected -p semitone string
+		wantPFlag string   // expected -p semitone string (empty = rubberband not called)
 	}{
-		{name: "wav→wav uses only rubberband", inExt: ".wav", outExt: ".wav", semitones: -3,
-			wantCalls: []string{"rubberband"}, wantPFlag: "-3"},
-		{name: "mp3→mp3 decodes, shifts, encodes", inExt: ".mp3", outExt: ".mp3", semitones: 5,
-			wantCalls: []string{"ffmpeg", "rubberband", "ffmpeg"}, wantPFlag: "5"},
-		{name: "wav→mp3 zero-shift skips rubberband", inExt: ".wav", outExt: ".mp3", semitones: 0,
-			wantCalls: []string{"ffmpeg"}, wantPFlag: ""},
+		{
+			name:      "mp3→mp3 non-zero shift uses only rubberband",
+			semitones: -3,
+			wantCalls: []string{"rubberband"},
+			wantPFlag: "-3",
+		},
+		{
+			name:      "mp3→mp3 zero-shift copies file, no rubberband",
+			semitones: 0,
+			wantCalls: []string{},
+			wantPFlag: "",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			in := filepath.Join(dir, "in"+tt.inExt)
-			out := filepath.Join(dir, "out"+tt.outExt)
+			in := filepath.Join(dir, "in"+services.AudioExt)
+			out := filepath.Join(dir, "out"+services.AudioExt)
 			if err := os.WriteFile(in, []byte("audio bytes"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			runner := &recordingRunner{
 				onCall: func(_ string, args []string) error {
-					// Touch the output file argument so downstream rubberband/ffmpeg sees input.
+					// Touch the output file argument so downstream steps see content.
 					last := args[len(args)-1]
 					return os.WriteFile(last, []byte("x"), 0o644)
 				},
 			}
-			s := services.NewCLIShifter("rubberband", "ffmpeg", runner)
+			s := services.NewCLIShifter("rubberband", runner)
 			if err := s.Shift(context.Background(), in, out, tt.semitones); err != nil {
 				t.Fatalf("Shift: %v", err)
 			}
@@ -70,13 +74,15 @@ func TestCLIShifter_Shift(t *testing.T) {
 					t.Errorf("call[%d]: got %q, want %q", i, runner.calls[i][0], want)
 				}
 			}
-			for _, call := range runner.calls {
-				if call[0] != "rubberband" {
-					continue
-				}
-				joined := strings.Join(call, " ")
-				if !strings.Contains(joined, "-p "+tt.wantPFlag) {
-					t.Errorf("rubberband args missing -p %s: %q", tt.wantPFlag, joined)
+			if tt.wantPFlag != "" {
+				for _, call := range runner.calls {
+					if call[0] != "rubberband" {
+						continue
+					}
+					joined := strings.Join(call, " ")
+					if !strings.Contains(joined, "-p "+tt.wantPFlag) {
+						t.Errorf("rubberband args missing -p %s: %q", tt.wantPFlag, joined)
+					}
 				}
 			}
 			if _, err := os.Stat(out); err != nil {
@@ -96,8 +102,8 @@ func TestCLIShifter_Shift_RunnerError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			in := filepath.Join(dir, "in.wav")
-			out := filepath.Join(dir, "out.wav")
+			in := filepath.Join(dir, "in"+services.AudioExt)
+			out := filepath.Join(dir, "out"+services.AudioExt)
 			_ = os.WriteFile(in, []byte("x"), 0o644)
 			runner := &recordingRunner{onCall: func(name string, _ []string) error {
 				if name == "rubberband" {
@@ -105,7 +111,7 @@ func TestCLIShifter_Shift_RunnerError(t *testing.T) {
 				}
 				return nil
 			}}
-			s := services.NewCLIShifter("rubberband", "ffmpeg", runner)
+			s := services.NewCLIShifter("rubberband", runner)
 			if err := s.Shift(context.Background(), in, out, tt.semitones); err == nil {
 				t.Fatal("want error, got nil")
 			}

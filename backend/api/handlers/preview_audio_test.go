@@ -42,15 +42,15 @@ func newPreviewAudioStorage(t *testing.T) *services.LocalDiskStorage {
 	return st
 }
 
-// stagePreviewAudioMp3 pre-stages a preview-stems/no_vocals.wav into storage for
+// stagePreviewAudioMp3 pre-stages a preview-stems/no_vocals.mp3 into storage for
 // the given videoID.
 func stagePreviewAudioMp3(t *testing.T, storage *services.LocalDiskStorage, videoID string, content []byte) {
 	t.Helper()
-	tmp := filepath.Join(t.TempDir(), "no_vocals.wav")
+	tmp := filepath.Join(t.TempDir(), "no_vocals"+services.AudioExt)
 	if err := os.WriteFile(tmp, content, 0o644); err != nil {
 		t.Fatalf("write tmp: %v", err)
 	}
-	if err := storage.Commit(context.Background(), storage.Key(videoID, "preview-stems/no_vocals.wav"), tmp); err != nil {
+	if err := storage.Commit(context.Background(), storage.Key(videoID, "preview-stems/no_vocals"+services.AudioExt), tmp); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
 }
@@ -148,7 +148,7 @@ func TestPreviewAudioHandler_StorageError(t *testing.T) {
 	validSig := signer.Sign(validID)
 
 	real := newPreviewAudioStorage(t)
-	st := &errStorage{Storage: real, errOnHasName: "preview-stems/no_vocals.wav"}
+	st := &errStorage{Storage: real, errOnHasName: "preview-stems/no_vocals" + services.AudioExt}
 	router := previewAudioRouter(signer, st)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/preview-audio/"+validID+"?sig="+validSig, nil)

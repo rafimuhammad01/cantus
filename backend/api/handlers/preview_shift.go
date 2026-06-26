@@ -22,8 +22,8 @@ type previewShiftRequest struct {
 }
 
 // shiftViaStorage downloads inKey to scratch, runs shifter, commits scratch out to outKey,
-// then verifies. inExt and outExt determine the tempfile extensions so Shifter's MP3↔WAV
-// dispatch picks the right pipeline. Returns early if outKey is already cached.
+// then verifies. inExt and outExt determine the tempfile extensions for scratch files.
+// Returns early if outKey is already cached.
 func shiftViaStorage(
 	ctx context.Context,
 	storage services.Storage,
@@ -114,8 +114,8 @@ func PreviewShift(
 		videoID := req.VideoID
 		n := req.Semitones
 
-		stemShiftedName := "preview-stems/shifted/" + strconv.Itoa(n) + ".wav"
-		legacyShiftedName := "preview-shifts/" + strconv.Itoa(n) + ".wav"
+		stemShiftedName := "preview-stems/shifted/" + strconv.Itoa(n) + services.AudioExt
+		legacyShiftedName := "preview-shifts/" + strconv.Itoa(n) + services.AudioExt
 
 		// Resolution order is load-bearing for the "no chipmunk" promise:
 		//   1. stem-shifted cache hit  → serve (clean, previously computed)
@@ -139,21 +139,21 @@ func PreviewShift(
 			serveName = stemShiftedName
 		}
 
-		// Cache miss on stem-shifted. Check stem WAV BEFORE consulting legacy cache.
+		// Cache miss on stem-shifted. Check stem MP3 BEFORE consulting legacy cache.
 		if serveKey == "" {
-			stemWAVHas, err := storage.Has(ctx, storage.Key(videoID, "preview-stems/no_vocals.wav"))
+			stemWAVHas, err := storage.Has(ctx, storage.Key(videoID, "preview-stems/no_vocals"+services.AudioExt))
 			if err != nil {
-				log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("storage.Has (stem WAV) failed")
+				log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("storage.Has (stem MP3) failed")
 				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage check failed"})
 				return
 			}
 
 			if stemWAVHas {
 				// Stem path: shift the clean instrumental stem locally.
-				inKey := storage.Key(videoID, "preview-stems/no_vocals.wav")
+				inKey := storage.Key(videoID, "preview-stems/no_vocals"+services.AudioExt)
 				outKey := storage.Key(videoID, stemShiftedName)
 				doShift := func() error {
-					return shiftViaStorage(ctx, storage, shifter, inKey, outKey, ".wav", ".wav", float64(n))
+					return shiftViaStorage(ctx, storage, shifter, inKey, outKey, services.AudioExt, services.AudioExt, float64(n))
 				}
 				var shiftErr error
 				if coord != nil {
@@ -187,7 +187,7 @@ func PreviewShift(
 
 		// Final fallback: still nothing? Run the legacy compute path (download + shift full mix).
 		if serveKey == "" {
-			previewHas, err := storage.Has(ctx, storage.Key(videoID, "preview.wav"))
+			previewHas, err := storage.Has(ctx, storage.Key(videoID, "preview"+services.AudioExt))
 			if err != nil {
 				log.Error().Err(err).Str("videoId", videoID).Int("semitones", n).Msg("storage.Has (preview) failed")
 				writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage check failed"})
@@ -202,13 +202,13 @@ func PreviewShift(
 				}
 			}
 
-			inKey := storage.Key(videoID, "preview.wav")
+			inKey := storage.Key(videoID, "preview"+services.AudioExt)
 			outKey := storage.Key(videoID, legacyShiftedName)
 			// Use a negated semitone value as the dedup key to distinguish from the
 			// stem shift path (they produce different outputs for the same videoID+n).
 			legacyKey := -(n + 13)
 			doLegacyShift := func() error {
-				return shiftViaStorage(ctx, storage, shifter, inKey, outKey, ".wav", ".wav", float64(n))
+				return shiftViaStorage(ctx, storage, shifter, inKey, outKey, services.AudioExt, services.AudioExt, float64(n))
 			}
 			var legacyShiftErr error
 			if coord != nil {

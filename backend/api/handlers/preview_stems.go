@@ -30,10 +30,10 @@ func runPreviewStemsHelper(
 	noVocalsWavHas bool,
 	melodyHas bool,
 ) (string, error) {
-	// Stage 1 — ensure preview.wav exists.
-	previewHas, err := storage.Has(ctx, storage.Key(videoID, "preview.wav"))
+	// Stage 1 — ensure preview.mp3 exists.
+	previewHas, err := storage.Has(ctx, storage.Key(videoID, "preview"+services.AudioExt))
 	if err != nil {
-		log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has (preview.wav) failed")
+		log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has (preview.mp3) failed")
 		return "storage check failed", err
 	}
 	if !previewHas {
@@ -46,36 +46,36 @@ func runPreviewStemsHelper(
 		}
 	}
 
-	// Stage 2 — ensure preview-stems/{vocals,no_vocals}.wav via GPU Separate.
+	// Stage 2 — ensure preview-stems/{vocals,no_vocals}.mp3 via GPU Separate.
 	// Both must be present; if either is missing re-run Demucs so the pair is consistent.
-	vocalsHas, err := storage.Has(ctx, storage.Key(videoID, "preview-stems/vocals.wav"))
+	vocalsHas, err := storage.Has(ctx, storage.Key(videoID, "preview-stems/vocals"+services.AudioExt))
 	if err != nil {
-		log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has (vocals.wav) failed")
+		log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has (vocals.mp3) failed")
 		return "storage check failed", err
 	}
-	noVocalsWavHasNow, err := storage.Has(ctx, storage.Key(videoID, "preview-stems/no_vocals.wav"))
+	noVocalsWavHasNow, err := storage.Has(ctx, storage.Key(videoID, "preview-stems/no_vocals"+services.AudioExt))
 	if err != nil {
-		log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has (no_vocals.wav) failed")
+		log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has (no_vocals.mp3) failed")
 		return "storage check failed", err
 	}
 	if !vocalsHas || !noVocalsWavHasNow {
-		previewKey := storage.Key(videoID, "preview.wav")
-		vocalsKey := storage.Key(videoID, "preview-stems/vocals.wav")
-		noVocalsKey := storage.Key(videoID, "preview-stems/no_vocals.wav")
+		previewKey := storage.Key(videoID, "preview"+services.AudioExt)
+		vocalsKey := storage.Key(videoID, "preview-stems/vocals"+services.AudioExt)
+		noVocalsKey := storage.Key(videoID, "preview-stems/no_vocals"+services.AudioExt)
 
 		inURL, err := storage.SignGet(ctx, previewKey)
 		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("storage.SignGet (preview.wav) failed")
+			log.Error().Err(err).Str("videoId", videoID).Msg("storage.SignGet (preview.mp3) failed")
 			return "sign get failed", err
 		}
 		vocalsPutURL, err := storage.SignPut(ctx, vocalsKey)
 		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("storage.SignPut (vocals.wav) failed")
+			log.Error().Err(err).Str("videoId", videoID).Msg("storage.SignPut (vocals.mp3) failed")
 			return "sign put failed", err
 		}
 		noVocalsPutURL, err := storage.SignPut(ctx, noVocalsKey)
 		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("storage.SignPut (no_vocals.wav) failed")
+			log.Error().Err(err).Str("videoId", videoID).Msg("storage.SignPut (no_vocals.mp3) failed")
 			return "sign put failed", err
 		}
 		if err := services.Retry(ctx, services.PipelineRetryAttempts, services.PipelineRetryBaseDelay, func() error {
@@ -86,12 +86,12 @@ func runPreviewStemsHelper(
 			return "separate failed", err
 		}
 		if err := storage.Verify(ctx, vocalsKey); err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Verify (vocals.wav) failed")
+			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Verify (vocals.mp3) failed")
 			failures.RecordFailure(videoID)
 			return "vocals stem not materialized", err
 		}
 		if err := storage.Verify(ctx, noVocalsKey); err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Verify (no_vocals.wav) failed")
+			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Verify (no_vocals.mp3) failed")
 			failures.RecordFailure(videoID)
 			return "no_vocals stem not materialized", err
 		}
@@ -99,11 +99,11 @@ func runPreviewStemsHelper(
 
 	// Stage 3 — ensure preview-stems/melody.json.
 	if !melodyHas {
-		vocalsKey := storage.Key(videoID, "preview-stems/vocals.wav")
+		vocalsKey := storage.Key(videoID, "preview-stems/vocals"+services.AudioExt)
 		melodyKey := storage.Key(videoID, "preview-stems/melody.json")
 		vocalsURL, err := storage.SignGet(ctx, vocalsKey)
 		if err != nil {
-			log.Error().Err(err).Msg("storage.SignGet (vocals.wav) failed")
+			log.Error().Err(err).Msg("storage.SignGet (vocals.mp3) failed")
 			return "sign get failed", err
 		}
 		outURL, err := storage.SignPut(ctx, melodyKey)
@@ -131,7 +131,7 @@ func runPreviewStemsHelper(
 
 // PreviewStems returns an http.HandlerFunc that runs Demucs + CREPE on the 30s
 // preview clip and caches the results. The handler is idempotent: if both
-// preview-stems/no_vocals.wav and preview-stems/melody.json are already cached it
+// preview-stems/no_vocals.mp3 and preview-stems/melody.json are already cached it
 // returns 200 immediately without touching any upstream service.
 func PreviewStems(
 	signer *services.Signer,
@@ -170,9 +170,9 @@ func PreviewStems(
 		}
 
 		// Phase 2 — idempotent fast-path: both final outputs already cached.
-		noVocalsWavHas, err := storage.Has(ctx, storage.Key(videoID, "preview-stems/no_vocals.wav"))
+		noVocalsWavHas, err := storage.Has(ctx, storage.Key(videoID, "preview-stems/no_vocals"+services.AudioExt))
 		if err != nil {
-			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has (no_vocals.wav) failed")
+			log.Error().Err(err).Str("videoId", videoID).Msg("storage.Has (no_vocals.mp3) failed")
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "storage check failed"})
 			return
 		}

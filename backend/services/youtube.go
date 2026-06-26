@@ -1,11 +1,13 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"cantus/backend/models"
@@ -24,9 +26,25 @@ type CommandRunner interface {
 // ExecRunner runs commands using os/exec.
 type ExecRunner struct{}
 
-// Run executes name with args under ctx using os/exec.
+// Run executes name with args under ctx. On non-zero exit the returned error
+// string includes the tail of stderr (capped at 2 KB) so callers can surface
+// the actual failure reason without a separate stderr-capture API.
 func (ExecRunner) Run(ctx context.Context, name string, args ...string) error {
-	return exec.CommandContext(ctx, name, args...).Run()
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return nil
+	}
+	msg := strings.TrimSpace(stderr.String())
+	if len(msg) > 2048 {
+		msg = msg[len(msg)-2048:]
+	}
+	if msg == "" {
+		return err
+	}
+	return fmt.Errorf("%w: %s", err, msg)
 }
 
 // YouTubeService abstracts song search and audio retrieval.
@@ -123,7 +141,7 @@ func (s *PythonYouTubeService) runWithStallDetector(ctx context.Context, outPath
 }
 
 // DownloadPreview downloads the first 30 seconds of audio for videoID via yt-dlp
-// and commits it to storage under the name "preview.wav". It returns an error if
+// and commits it to storage under the name "preview.mp3". It returns an error if
 // videoID is invalid, yt-dlp fails, or storage.Commit fails.
 func (s *PythonYouTubeService) DownloadPreview(ctx context.Context, videoID string) error {
 	if err := ctx.Err(); err != nil {
@@ -140,13 +158,13 @@ func (s *PythonYouTubeService) DownloadPreview(ctx context.Context, videoID stri
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	outPath := filepath.Join(tmpDir, "preview.wav")
+	outPath := filepath.Join(tmpDir, "preview"+AudioExt)
 
 	args := append(s.botGateArgs(), []string{
 		"--download-sections", "*0-30",
-		"-x", "--audio-format", "wav",
+		"-x", "--audio-format", "mp3",
 		"-o", outPath,
-		"--quiet", "--no-warnings",
+		"--no-progress",
 		"--", // guards against videoIDs that could be interpreted as flags
 		"https://youtu.be/" + videoID,
 	}...)
@@ -155,7 +173,7 @@ func (s *PythonYouTubeService) DownloadPreview(ctx context.Context, videoID stri
 		return fmt.Errorf("download preview: yt-dlp: %w", err)
 	}
 
-	if err := s.storage.Commit(ctx, s.storage.Key(videoID, "preview.wav"), outPath); err != nil {
+	if err := s.storage.Commit(ctx, s.storage.Key(videoID, "preview"+AudioExt), outPath); err != nil {
 		return fmt.Errorf("download preview: commit: %w", err)
 	}
 
@@ -163,7 +181,7 @@ func (s *PythonYouTubeService) DownloadPreview(ctx context.Context, videoID stri
 }
 
 // DownloadFull downloads the full audio for videoID via yt-dlp and commits it
-// to storage under the name "original.wav". It returns an error if videoID is
+// to storage under the name "original.mp3". It returns an error if videoID is
 // invalid, yt-dlp fails, or storage.Commit fails.
 func (s *PythonYouTubeService) DownloadFull(ctx context.Context, videoID string) error {
 	if err := ctx.Err(); err != nil {
@@ -180,12 +198,12 @@ func (s *PythonYouTubeService) DownloadFull(ctx context.Context, videoID string)
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	outPath := filepath.Join(tmpDir, "original.wav")
+	outPath := filepath.Join(tmpDir, "original"+AudioExt)
 
 	args := append(s.botGateArgs(), []string{
-		"-x", "--audio-format", "wav",
+		"-x", "--audio-format", "mp3",
 		"-o", outPath,
-		"--quiet", "--no-warnings",
+		"--no-progress",
 		"--", // guards against videoIDs that could be interpreted as flags
 		"https://youtu.be/" + videoID,
 	}...)
@@ -194,7 +212,7 @@ func (s *PythonYouTubeService) DownloadFull(ctx context.Context, videoID string)
 		return fmt.Errorf("download full: yt-dlp: %w", err)
 	}
 
-	if err := s.storage.Commit(ctx, s.storage.Key(videoID, "original.wav"), outPath); err != nil {
+	if err := s.storage.Commit(ctx, s.storage.Key(videoID, "original"+AudioExt), outPath); err != nil {
 		return fmt.Errorf("download full: commit: %w", err)
 	}
 

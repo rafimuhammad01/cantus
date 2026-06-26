@@ -28,7 +28,7 @@ func Preview(signer *services.Signer, storage services.Storage, svc services.You
 		}
 
 		log := logger.FromCtx(r.Context())
-		key := storage.Key(videoID, "preview.wav")
+		key := storage.Key(videoID, "preview"+services.AudioExt)
 
 		ok, err := storage.Has(r.Context(), key)
 		if err != nil {
@@ -66,6 +66,6 @@ func Preview(signer *services.Signer, storage services.Storage, svc services.You
 			return
 		}
 
-		http.ServeContent(w, r, "preview.wav", time.Now(), bytes.NewReader(buf))
+		http.ServeContent(w, r, "preview"+services.AudioExt, time.Now(), bytes.NewReader(buf))
 	}
 }

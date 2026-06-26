@@ -247,7 +247,7 @@ func (r *JobRunner) runPrewarm(ctx context.Context, jobID, videoID string) {
 
 	// Stage 1: Download full audio.
 	r.update(jobID, models.StatusDownloading, "downloading full song")
-	has, err := r.storage.Has(ctx, r.storage.Key(videoID, "original.wav"))
+	has, err := r.storage.Has(ctx, r.storage.Key(videoID, "original"+AudioExt))
 	if err != nil {
 		r.fail(jobID, "storage check failed: "+err.Error())
 		return
@@ -263,12 +263,12 @@ func (r *JobRunner) runPrewarm(ctx context.Context, jobID, videoID string) {
 
 	// Stage 2: Separate vocals from instrumental.
 	r.update(jobID, models.StatusSeparating, "separating vocals from instrumental")
-	vocalsKey := r.storage.Key(videoID, "vocals.wav")
-	noVocalsKey := r.storage.Key(videoID, "no_vocals.wav")
+	vocalsKey := r.storage.Key(videoID, "vocals"+AudioExt)
+	noVocalsKey := r.storage.Key(videoID, "no_vocals"+AudioExt)
 	vocalsHas, _ := r.storage.Has(ctx, vocalsKey)
 	noVocalsHas, _ := r.storage.Has(ctx, noVocalsKey)
 	if !vocalsHas || !noVocalsHas {
-		inURL, err := r.storage.SignGet(ctx, r.storage.Key(videoID, "original.wav"))
+		inURL, err := r.storage.SignGet(ctx, r.storage.Key(videoID, "original"+AudioExt))
 		if err != nil {
 			r.fail(jobID, "sign get failed: "+err.Error())
 			return
@@ -304,7 +304,7 @@ func (r *JobRunner) runPrewarm(ctx context.Context, jobID, videoID string) {
 	melodyKey := r.storage.Key(videoID, "melody.json")
 	melodyHas, _ := r.storage.Has(ctx, melodyKey)
 	if !melodyHas {
-		vocalsURL, err := r.storage.SignGet(ctx, r.storage.Key(videoID, "vocals.wav"))
+		vocalsURL, err := r.storage.SignGet(ctx, r.storage.Key(videoID, "vocals"+AudioExt))
 		if err != nil {
 			r.fail(jobID, "sign get failed: "+err.Error())
 			return
@@ -338,17 +338,17 @@ func (r *JobRunner) runShift(ctx context.Context, jobID, videoID string, semiton
 	}
 
 	r.update(jobID, models.StatusShifting, "shifting instrumental to your key")
-	shiftedName := "shifted/" + strconv.Itoa(semitones) + "/audio.wav"
+	shiftedName := "shifted/" + strconv.Itoa(semitones) + "/audio" + AudioExt
 	shiftedKey := r.storage.Key(videoID, shiftedName)
 	shiftedHas, _ := r.storage.Has(ctx, shiftedKey)
 	if !shiftedHas {
-		noVocalsKey := r.storage.Key(videoID, "no_vocals.wav")
+		noVocalsKey := r.storage.Key(videoID, "no_vocals"+AudioExt)
 		rc, err := r.storage.Open(ctx, noVocalsKey)
 		if err != nil {
 			failAndRecord("open no_vocals: " + err.Error())
 			return
 		}
-		scratchIn, err := os.CreateTemp("", "cantus-shift-in-*.wav")
+		scratchIn, err := os.CreateTemp("", "cantus-shift-in-*"+AudioExt)
 		if err != nil {
 			_ = rc.Close()
 			failAndRecord("tempfile in: " + err.Error())
@@ -365,7 +365,7 @@ func (r *JobRunner) runShift(ctx context.Context, jobID, videoID string, semiton
 		_ = scratchIn.Close()
 		defer func() { _ = os.Remove(scratchIn.Name()) }()
 
-		scratchOut, err := os.CreateTemp("", "cantus-shift-out-*.wav")
+		scratchOut, err := os.CreateTemp("", "cantus-shift-out-*"+AudioExt)
 		if err != nil {
 			failAndRecord("tempfile out: " + err.Error())
 			return

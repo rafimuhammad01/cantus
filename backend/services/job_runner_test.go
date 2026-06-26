@@ -185,11 +185,11 @@ func TestJobRunner_Run(t *testing.T) {
 		{
 			name: "happy path warm - everything cached",
 			preStage: []string{
-				"original.wav",
-				"vocals.wav",
-				"no_vocals.wav",
+				"original" + services.AudioExt,
+				"vocals" + services.AudioExt,
+				"no_vocals" + services.AudioExt,
 				"melody.json",
-				"shifted/-2/audio.wav",
+				"shifted/-2/audio" + services.AudioExt,
 			},
 			wantStatus:        models.StatusDone,
 			wantDownloadCalls: 0,
@@ -198,8 +198,8 @@ func TestJobRunner_Run(t *testing.T) {
 			wantShiftCalls:    0,
 		},
 		{
-			name:               "partial cache: original.wav exists, stems missing",
-			preStage:           []string{"original.wav"},
+			name:               "partial cache: original.mp3 exists, stems missing",
+			preStage:           []string{"original" + services.AudioExt},
 			writeSeparateFiles: true,
 			writeMelodyFile:    true,
 			writeShiftFile:     true,
@@ -211,7 +211,7 @@ func TestJobRunner_Run(t *testing.T) {
 		},
 		{
 			name:              "partial cache: stems exist, melody.json missing",
-			preStage:          []string{"original.wav", "vocals.wav", "no_vocals.wav"},
+			preStage:          []string{"original" + services.AudioExt, "vocals" + services.AudioExt, "no_vocals" + services.AudioExt},
 			writeMelodyFile:   true,
 			writeShiftFile:    true,
 			wantStatus:        models.StatusDone,
@@ -223,11 +223,11 @@ func TestJobRunner_Run(t *testing.T) {
 		{
 			name: "partial cache: shifted file already exists",
 			preStage: []string{
-				"original.wav",
-				"vocals.wav",
-				"no_vocals.wav",
+				"original" + services.AudioExt,
+				"vocals" + services.AudioExt,
+				"no_vocals" + services.AudioExt,
 				"melody.json",
-				"shifted/-2/audio.wav",
+				"shifted/-2/audio" + services.AudioExt,
 			},
 			wantStatus:        models.StatusDone,
 			wantDownloadCalls: 0,
@@ -248,7 +248,7 @@ func TestJobRunner_Run(t *testing.T) {
 		},
 		{
 			name:              "separate fails",
-			preStage:          []string{"original.wav"},
+			preStage:          []string{"original" + services.AudioExt},
 			separateErr:       errors.New("demucs: out of memory"),
 			wantStatus:        models.StatusError,
 			wantMsgContains:   "separate",
@@ -259,7 +259,7 @@ func TestJobRunner_Run(t *testing.T) {
 		},
 		{
 			name:              "melody fails",
-			preStage:          []string{"original.wav", "vocals.wav", "no_vocals.wav"},
+			preStage:          []string{"original" + services.AudioExt, "vocals" + services.AudioExt, "no_vocals" + services.AudioExt},
 			melodyErr:         errors.New("crepe: model not loaded"),
 			wantStatus:        models.StatusError,
 			wantMsgContains:   "melody",
@@ -270,7 +270,7 @@ func TestJobRunner_Run(t *testing.T) {
 		},
 		{
 			name:              "shift fails",
-			preStage:          []string{"original.wav", "vocals.wav", "no_vocals.wav", "melody.json"},
+			preStage:          []string{"original" + services.AudioExt, "vocals" + services.AudioExt, "no_vocals" + services.AudioExt, "melody.json"},
 			shiftErr:          errors.New("rubberband: invalid input"),
 			wantStatus:        models.StatusError,
 			wantMsgContains:   "shift",
@@ -308,8 +308,8 @@ func TestJobRunner_Run(t *testing.T) {
 			} else if tt.writeSeparateFiles {
 				fakeProc.separateFn = func(_ context.Context, _, _, _ string) error {
 					gpuSeparateCalls++
-					commitFile(t, storage, storage.Key(videoID, "vocals.wav"), "fake vocals")
-					commitFile(t, storage, storage.Key(videoID, "no_vocals.wav"), "fake no_vocals")
+					commitFile(t, storage, storage.Key(videoID, "vocals"+services.AudioExt), "fake vocals")
+					commitFile(t, storage, storage.Key(videoID, "no_vocals"+services.AudioExt), "fake no_vocals")
 					return nil
 				}
 			}
@@ -342,7 +342,7 @@ func TestJobRunner_Run(t *testing.T) {
 			// DownloadFull side effect: write original.wav so Separate stage can find it.
 			if tt.downloadFullErr == nil && tt.writeSeparateFiles {
 				fakeYT.downloadFullFn = func(vid string) error {
-					commitFile(t, storage, storage.Key(vid, "original.wav"), "fake original wav")
+					commitFile(t, storage, storage.Key(vid, "original"+services.AudioExt), "fake original wav")
 					return nil
 				}
 			}
@@ -385,7 +385,7 @@ func TestJobRunner_Run(t *testing.T) {
 
 			// On success, verify shifted file is in cache.
 			if tt.wantStatus == models.StatusDone && tt.writeShiftFile {
-				has, err := storage.Has(ctx, storage.Key(videoID, "shifted/-2/audio.wav"))
+				has, err := storage.Has(ctx, storage.Key(videoID, "shifted/-2/audio"+services.AudioExt))
 				if err != nil {
 					t.Fatalf("storage.Has(shifted/-2/audio.wav): %v", err)
 				}
@@ -420,8 +420,8 @@ func TestJobRunner_Submit_RunsAsync(t *testing.T) {
 	fakeProc := &fakeProcessorJob{
 		separateFn: func(_ context.Context, _, _, _ string) error {
 			gpuSeparateCalls++
-			commitFile(t, storage, storage.Key(videoID, "vocals.wav"), "v")
-			commitFile(t, storage, storage.Key(videoID, "no_vocals.wav"), "nv")
+			commitFile(t, storage, storage.Key(videoID, "vocals"+services.AudioExt), "v")
+			commitFile(t, storage, storage.Key(videoID, "no_vocals"+services.AudioExt), "nv")
 			return nil
 		},
 		melodyFn: func(_ context.Context, _, _ string) error {
@@ -433,7 +433,7 @@ func TestJobRunner_Submit_RunsAsync(t *testing.T) {
 
 	// Wire side-effect fns so pipeline can complete.
 	fakeYT.downloadFullFn = func(vid string) error {
-		commitFile(t, storage, storage.Key(vid, "original.wav"), "fake original")
+		commitFile(t, storage, storage.Key(vid, "original"+services.AudioExt), "fake original")
 		return nil
 	}
 	// fakeShifter default fn writes "shifted" bytes to out path — sufficient for Commit+Verify.
@@ -499,8 +499,8 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 				separateMu.Lock()
 				gpuSeparateCalls++
 				separateMu.Unlock()
-				commitFile(t, storage, storage.Key("dedupvideo1", "vocals.wav"), "v")
-				commitFile(t, storage, storage.Key("dedupvideo1", "no_vocals.wav"), "nv")
+				commitFile(t, storage, storage.Key("dedupvideo1", "vocals"+services.AudioExt), "v")
+				commitFile(t, storage, storage.Key("dedupvideo1", "no_vocals"+services.AudioExt), "nv")
 				return nil
 			},
 		}
@@ -512,7 +512,7 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		const videoID = "dedupvideo1"
 
 		fakeYT.downloadFullFn = func(vid string) error {
-			commitFile(t, storage, storage.Key(vid, "original.wav"), "orig")
+			commitFile(t, storage, storage.Key(vid, "original"+services.AudioExt), "orig")
 			return nil
 		}
 		fakeProc.melodyFn = func(_ context.Context, _, _ string) error {
@@ -556,8 +556,8 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 
 		fakeProc := &fakeProcessorJob{
 			separateFn: func(_ context.Context, _, _, _ string) error {
-				commitFile(t, storage, storage.Key(videoID, "vocals.wav"), "v")
-				commitFile(t, storage, storage.Key(videoID, "no_vocals.wav"), "nv")
+				commitFile(t, storage, storage.Key(videoID, "vocals"+services.AudioExt), "v")
+				commitFile(t, storage, storage.Key(videoID, "no_vocals"+services.AudioExt), "nv")
 				return nil
 			},
 			melodyFn: func(_ context.Context, _, _ string) error {
@@ -568,7 +568,7 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		runner := services.NewJobRunner(fakeYT, storage, fakeProc, fakeShift2, jobStore, 1)
 
 		fakeYT.downloadFullFn = func(vid string) error {
-			commitFile(t, storage, storage.Key(vid, "original.wav"), "orig")
+			commitFile(t, storage, storage.Key(vid, "original"+services.AudioExt), "orig")
 			return nil
 		}
 		// fakeShift2 default fn writes bytes to out path — sufficient for Commit+Verify.
@@ -607,7 +607,7 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 
 		// Wire download to succeed (writes original.wav) so we reach Separate.
 		fakeYT.downloadFullFn = func(vid string) error {
-			commitFile(t, storage, storage.Key(vid, "original.wav"), "orig")
+			commitFile(t, storage, storage.Key(vid, "original"+services.AudioExt), "orig")
 			return nil
 		}
 
@@ -618,8 +618,8 @@ func TestJobRunner_Submit_Dedup(t *testing.T) {
 		// Second run: GPU Separate succeeds and commits stems.
 		successProc := &fakeProcessorJob{
 			separateFn: func(_ context.Context, _, _, _ string) error {
-				commitFile(t, storage, storage.Key(videoID, "vocals.wav"), "v")
-				commitFile(t, storage, storage.Key(videoID, "no_vocals.wav"), "nv")
+				commitFile(t, storage, storage.Key(videoID, "vocals"+services.AudioExt), "v")
+				commitFile(t, storage, storage.Key(videoID, "no_vocals"+services.AudioExt), "nv")
 				return nil
 			},
 		}
@@ -673,8 +673,8 @@ func TestJobRunner_Submit_BoundedConcurrency(t *testing.T) {
 			<-blockCh
 			// We don't know which vid ran; commit stems for both so the pipeline can continue.
 			for _, vid := range []string{vid1, vid2} {
-				commitFile(t, storage, storage.Key(vid, "vocals.wav"), "v")
-				commitFile(t, storage, storage.Key(vid, "no_vocals.wav"), "nv")
+				commitFile(t, storage, storage.Key(vid, "vocals"+services.AudioExt), "v")
+				commitFile(t, storage, storage.Key(vid, "no_vocals"+services.AudioExt), "nv")
 			}
 			return nil
 		},
@@ -691,7 +691,7 @@ func TestJobRunner_Submit_BoundedConcurrency(t *testing.T) {
 
 	// Both jobs share fakeYT; downloadFullFn writes original.wav per videoID.
 	fakeYT.downloadFullFn = func(vid string) error {
-		commitFile(t, storage, storage.Key(vid, "original.wav"), "orig")
+		commitFile(t, storage, storage.Key(vid, "original"+services.AudioExt), "orig")
 		return nil
 	}
 	// fakeShiftConc default fn writes bytes to out path — sufficient for Commit+Verify.

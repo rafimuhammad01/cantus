@@ -212,14 +212,14 @@ func TestPythonYouTubeService_DownloadPreview(t *testing.T) {
 				mustContainArg(t, args, "*0-30")
 				mustContainArg(t, args, "-x")
 				mustContainArg(t, args, "--audio-format")
-				mustContainArg(t, args, "wav")
+				mustContainArg(t, args, "mp3")
 
-				// -o must be followed by a path ending in preview.wav.
+				// -o must be followed by a path ending in preview.mp3.
 				oIdx := indexArg(args, "-o")
 				if oIdx < 0 || oIdx+1 >= len(args) {
 					t.Error("args: missing -o <path>")
-				} else if !strings.HasSuffix(args[oIdx+1], "preview.wav") {
-					t.Errorf("args: -o path %q does not end in preview.wav", args[oIdx+1])
+				} else if !strings.HasSuffix(args[oIdx+1], "preview"+services.AudioExt) {
+					t.Errorf("args: -o path %q does not end in preview.mp3", args[oIdx+1])
 				}
 
 				// -- separator must appear before the URL.
@@ -251,7 +251,7 @@ func TestPythonYouTubeService_DownloadPreview(t *testing.T) {
 			}
 			if tt.wantCommitCount > 0 && len(store.committed) > 0 {
 				c := store.committed[0]
-				wantKey := tt.videoID + "/preview.wav"
+				wantKey := tt.videoID + "/preview" + services.AudioExt
 				if c.key != wantKey {
 					t.Errorf("Commit key: got %q, want %q", c.key, wantKey)
 				}
@@ -410,13 +410,13 @@ func TestPythonYouTubeService_DownloadFull(t *testing.T) {
 
 				mustContainArg(t, args, "-x")
 				mustContainArg(t, args, "--audio-format")
-				mustContainArg(t, args, "wav")
+				mustContainArg(t, args, "mp3")
 
 				oIdx := indexArg(args, "-o")
 				if oIdx < 0 || oIdx+1 >= len(args) {
 					t.Error("args: missing -o <path>")
-				} else if !strings.HasSuffix(args[oIdx+1], "original.wav") {
-					t.Errorf("args: -o path %q does not end in original.wav", args[oIdx+1])
+				} else if !strings.HasSuffix(args[oIdx+1], "original"+services.AudioExt) {
+					t.Errorf("args: -o path %q does not end in original.mp3", args[oIdx+1])
 				}
 
 				dashDashIdx := indexArg(args, "--")
@@ -445,7 +445,7 @@ func TestPythonYouTubeService_DownloadFull(t *testing.T) {
 			}
 			if tt.wantCommitCount > 0 && len(store.committed) > 0 {
 				c := store.committed[0]
-				wantKey := tt.videoID + "/original.wav"
+				wantKey := tt.videoID + "/original" + services.AudioExt
 				if c.key != wantKey {
 					t.Errorf("Commit key: got %q, want %q", c.key, wantKey)
 				}

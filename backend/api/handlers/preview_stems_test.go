@@ -122,13 +122,13 @@ func stemsRouter(
 // preStagePreview writes a dummy preview.wav into storage for the given videoID.
 func preStagePreview(t *testing.T, st *services.LocalDiskStorage, videoID string) {
 	t.Helper()
-	commitToStorage(t, st, st.Key(videoID, "preview.wav"), []byte("fake preview bytes"))
+	commitToStorage(t, st, st.Key(videoID, "preview"+services.AudioExt), []byte("fake preview bytes"))
 }
 
 // preStageStems writes dummy vocals.wav + no_vocals.wav into storage.
 func preStageStems(t *testing.T, st *services.LocalDiskStorage, videoID string) {
 	t.Helper()
-	for _, name := range []string{"preview-stems/vocals.wav", "preview-stems/no_vocals.wav"} {
+	for _, name := range []string{"preview-stems/vocals" + services.AudioExt, "preview-stems/no_vocals" + services.AudioExt} {
 		commitToStorage(t, st, st.Key(videoID, name), []byte("fake wav"))
 	}
 }
@@ -156,8 +156,8 @@ func commitMelodyToStorage(t *testing.T, st *services.LocalDiskStorage, videoID 
 // so that storage.Verify passes after the fake GPU Separate call.
 func commitStemsToStorage(t *testing.T, st *services.LocalDiskStorage, videoID string) {
 	t.Helper()
-	for _, name := range []string{"preview-stems/vocals.wav", "preview-stems/no_vocals.wav"} {
-		src := filepath.Join(t.TempDir(), "stem.wav")
+	for _, name := range []string{"preview-stems/vocals" + services.AudioExt, "preview-stems/no_vocals" + services.AudioExt} {
+		src := filepath.Join(t.TempDir(), "stem"+services.AudioExt)
 		if err := os.WriteFile(src, []byte("fake wav"), 0o644); err != nil {
 			t.Fatalf("WriteFile: %v", err)
 		}
@@ -214,7 +214,7 @@ func TestPreviewStemsHandler(t *testing.T) {
 			wantDownload: 1,
 			wantSeparate: 1,
 			wantMelody:   1,
-			wantCached:   []string{"preview-stems/no_vocals.wav", "preview-stems/melody.json"},
+			wantCached:   []string{"preview-stems/no_vocals" + services.AudioExt, "preview-stems/melody.json"},
 		},
 		{
 			name: "idempotent — all artifacts cached, no upstream calls",
@@ -349,7 +349,7 @@ func TestPreviewStemsHandler(t *testing.T) {
 			setup: func(t *testing.T) (services.Storage, *fakeYouTubeStems, *fakeStemsProcessor) {
 				real := newStemsStorage(t)
 				// Fail on the first Has call (no_vocals.wav check) — this is in Phase 2 (pre-streaming).
-				st := &errStorage{Storage: real, errOnHasName: "preview-stems/no_vocals.wav"}
+				st := &errStorage{Storage: real, errOnHasName: "preview-stems/no_vocals" + services.AudioExt}
 				return st, &fakeYouTubeStems{}, &fakeStemsProcessor{}
 			},
 			wantStatus:       http.StatusInternalServerError,

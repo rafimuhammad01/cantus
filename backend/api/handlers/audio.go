@@ -13,7 +13,7 @@ import (
 	"cantus/backend/services"
 )
 
-// Audio returns an http.HandlerFunc that serves the cached pitch-shifted full instrumental WAV.
+// Audio returns an http.HandlerFunc that serves the cached pitch-shifted full instrumental MP3.
 func Audio(signer *services.Signer, storage services.Storage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		videoID := chi.URLParam(r, "videoId")
@@ -41,7 +41,7 @@ func Audio(signer *services.Signer, storage services.Storage) http.HandlerFunc {
 
 		ctx := r.Context()
 		log := logger.FromCtx(ctx)
-		name := "shifted/" + strconv.Itoa(semitones) + "/audio.wav"
+		name := "shifted/" + strconv.Itoa(semitones) + "/audio" + services.AudioExt
 		key := storage.Key(videoID, name)
 
 		ok, err := storage.Has(ctx, key)
@@ -69,7 +69,7 @@ func Audio(signer *services.Signer, storage services.Storage) http.HandlerFunc {
 		}
 		defer func() { _ = rc.Close() }()
 
-		// Beta scale; bounded MP3 sizes. Streaming Range from R2 can come later if profiling shows memory pressure.
+		// Beta scale; bounded sizes. Streaming Range from R2 can come later if profiling shows memory pressure.
 		buf, err := io.ReadAll(rc)
 		if err != nil {
 			log.Error().Err(err).Str("videoId", videoID).Int("semitones", semitones).Msg("io.ReadAll failed")
@@ -77,6 +77,6 @@ func Audio(signer *services.Signer, storage services.Storage) http.HandlerFunc {
 			return
 		}
 
-		http.ServeContent(w, r, "audio.wav", time.Now(), bytes.NewReader(buf))
+		http.ServeContent(w, r, "audio"+services.AudioExt, time.Now(), bytes.NewReader(buf))
 	}
 }

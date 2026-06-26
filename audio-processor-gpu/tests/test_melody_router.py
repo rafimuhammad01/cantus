@@ -64,7 +64,7 @@ def test_melody_happy_path(client_with_stub) -> None:
     """POST /melody with valid body → 200 {}; assert upload received the JSON bytes."""
     client, stub, io_state = client_with_stub
     body = {
-        "vocals_input_url": "https://r2.test/vocals.wav",
+        "vocals_input_url": "https://r2.test/vocals.mp3",
         "output_url": "https://r2.test/melody.json",
     }
 
@@ -72,7 +72,7 @@ def test_melody_happy_path(client_with_stub) -> None:
 
     assert resp.status_code == 200
     assert resp.json() == {}
-    assert io_state["input_url"] == "https://r2.test/vocals.wav"
+    assert io_state["input_url"] == "https://r2.test/vocals.mp3"
     assert io_state["output_url"] == "https://r2.test/melody.json"
     assert io_state["uploaded"] == b'{"key":"A","series":[]}'
     assert len(stub.calls) == 1
@@ -82,9 +82,9 @@ def test_melody_happy_path(client_with_stub) -> None:
     "body",
     [
         {"output_url": "/b/melody.json"},  # missing vocals_input_url
-        {"vocals_input_url": "/a/vocals.wav"},  # missing output_url
+        {"vocals_input_url": "/a/vocals.mp3"},  # missing output_url
         {"vocals_input_url": "", "output_url": "/b/melody.json"},  # empty vocals_input_url
-        {"vocals_input_url": "/a/vocals.wav", "output_url": ""},  # empty output_url
+        {"vocals_input_url": "/a/vocals.mp3", "output_url": ""},  # empty output_url
     ],
     ids=[
         "missing-vocals-input-url",
@@ -112,7 +112,7 @@ def test_melody_runtime_error_returns_500(monkeypatch, stub_io) -> None:
         resp = client.post(
             "/melody",
             json={
-                "vocals_input_url": "https://r2.test/vocals.wav",
+                "vocals_input_url": "https://r2.test/vocals.mp3",
                 "output_url": "https://r2.test/melody.json",
             },
         )

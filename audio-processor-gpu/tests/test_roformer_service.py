@@ -19,10 +19,10 @@ class FakeSeparator:
     def separate(self, input_path: str) -> list[str]:
         self.last_input = input_path
         assert self.output_dir is not None
-        v = Path(self.output_dir) / "track_(Vocals)_BS-Roformer.wav"
-        i = Path(self.output_dir) / "track_(Instrumental)_BS-Roformer.wav"
-        v.write_bytes(b"VOCALS-WAV")
-        i.write_bytes(b"INSTR-WAV")
+        v = Path(self.output_dir) / "track_(Vocals)_BS-Roformer.mp3"
+        i = Path(self.output_dir) / "track_(Instrumental)_BS-Roformer.mp3"
+        v.write_bytes(b"VOCALS-MP3")
+        i.write_bytes(b"INSTR-MP3")
         return [str(v), str(i)]
 
 
@@ -44,6 +44,6 @@ def test_separate_happy_path(tmp_path: Path) -> None:
     )
     service.separate(str(input_file), str(output_dir))
 
-    assert (output_dir / "vocals.wav").read_bytes() == b"VOCALS-WAV"
-    assert (output_dir / "no_vocals.wav").read_bytes() == b"INSTR-WAV"
+    assert (output_dir / "vocals.mp3").read_bytes() == b"VOCALS-MP3"
+    assert (output_dir / "no_vocals.mp3").read_bytes() == b"INSTR-MP3"
     assert fake.loaded_model == "model_bs_roformer_ep_368_sdr_12.9628.ckpt"

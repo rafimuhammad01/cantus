@@ -9,7 +9,7 @@ def _default_factory(model_dir: str) -> Callable[[str], object]:
     def factory(output_dir: str) -> object:
         from audio_separator.separator import Separator
 
-        return Separator(model_file_dir=model_dir, output_dir=output_dir)
+        return Separator(model_file_dir=model_dir, output_dir=output_dir, output_format="MP3")
 
     return factory
 
@@ -18,7 +18,7 @@ class RoformerService:
     """In-process BS-Roformer vocal separation.
 
     Wraps audio_separator.Separator. Renames the UVR-style output files to the
-    canonical vocals.wav / no_vocals.wav expected by the rest of the pipeline.
+    canonical vocals.mp3 / no_vocals.mp3 expected by the rest of the pipeline.
     """
 
     def __init__(
@@ -35,8 +35,8 @@ class RoformerService:
         if not os.path.exists(input_path):
             raise FileNotFoundError(f"input_path not found: {input_path!r}")
 
-        vocals_target = Path(output_dir, "vocals.wav")
-        no_vocals_target = Path(output_dir, "no_vocals.wav")
+        vocals_target = Path(output_dir, "vocals.mp3")
+        no_vocals_target = Path(output_dir, "no_vocals.mp3")
 
         if (
             vocals_target.exists()
