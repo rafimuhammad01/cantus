@@ -35,9 +35,9 @@ func TestCLIShifter_Shift(t *testing.T) {
 		wantPFlag string   // expected -p semitone string (empty = rubberband not called)
 	}{
 		{
-			name:      "mp3→mp3 non-zero shift runs rubberband then ffmpeg encode",
+			name:      "mp3→mp3 non-zero shift runs ffmpeg decode, rubberband, ffmpeg encode",
 			semitones: -3,
-			wantCalls: []string{"rubberband", "ffmpeg"},
+			wantCalls: []string{"ffmpeg", "rubberband", "ffmpeg"},
 			wantPFlag: "-3",
 		},
 		{
