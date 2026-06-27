@@ -288,7 +288,7 @@ onUnmounted(() => {
             <template v-else>
               <!-- Shift pending overlay on the diagram card only -->
               <div
-                v-if="shiftPending"
+                v-if="shiftPending || player.shifting"
                 class="absolute inset-0 rounded-xl bg-[var(--color-surface)]/85 backdrop-blur-sm flex flex-col items-center justify-center gap-2 z-10"
               >
                 <svg
