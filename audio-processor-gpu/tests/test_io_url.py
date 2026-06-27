@@ -48,6 +48,7 @@ class _FakeClient:
         self.put_status = put_status
         self.raise_on = raise_on
         self.last_put_body: bytes | None = None
+        self.last_put_headers: dict = {}
 
     async def __aenter__(self):
         return self
@@ -69,7 +70,7 @@ class _FakeClient:
 
         return _Ctx()
 
-    async def put(self, url: str, content: Any) -> httpx.Response:
+    async def put(self, url: str, content: Any, headers: dict | None = None) -> httpx.Response:
         if self.raise_on == "put":
             raise httpx.ConnectError("network down")
         # `content` is an async iterator of bytes for streaming PUT.
@@ -77,6 +78,7 @@ class _FakeClient:
         async for chunk in content:
             body += chunk
         self.last_put_body = body
+        self.last_put_headers = dict(headers or {})
         return httpx.Response(self.put_status)
 
 
@@ -144,3 +146,25 @@ def test_upload_from_path_network_error_raises_502(scratch, monkeypatch):
     with pytest.raises(HTTPException) as ei:
         _run(upload_from_path(src, "http://test/dest"))
     assert ei.value.status_code == 502
+
+
+@pytest.mark.parametrize(
+    "filename, want_ct",
+    [
+        ("audio.mp3", "audio/mpeg"),
+        ("melody.json", "application/json"),
+        ("file.cantusnoext", None),  # unknown extension → header must be absent
+    ],
+)
+def test_upload_from_path_sets_content_type(scratch, monkeypatch, filename, want_ct):
+    src = scratch / filename
+    src.write_bytes(b"data")
+    fake = _FakeClient(put_status=200)
+    monkeypatch.setattr("routers._io_url._client", lambda: fake)
+
+    _run(upload_from_path(src, "http://test/dest"))
+
+    if want_ct is None:
+        assert "Content-Type" not in fake.last_put_headers
+    else:
+        assert fake.last_put_headers.get("Content-Type") == want_ct

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"os"
 	"path"
 	"time"
@@ -77,8 +78,7 @@ func (s *R2Storage) Has(ctx context.Context, key string) (bool, error) {
 		Key:    &key,
 	})
 	if err != nil {
-		var nf *types.NotFound
-		if errors.As(err, &nf) {
+		if _, ok := errors.AsType[*types.NotFound](err); ok {
 			return false, nil
 		}
 		return false, fmt.Errorf("r2: HeadObject %s: %w", key, err)
@@ -119,11 +119,17 @@ func (s *R2Storage) Commit(ctx context.Context, key, localPath string) error {
 		return fmt.Errorf("r2: open %s: %w", localPath, err)
 	}
 	defer func() { _ = f.Close() }()
-	if _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+	input := &s3.PutObjectInput{
 		Bucket: &s.cfg.Bucket,
 		Key:    &key,
 		Body:   f,
-	}); err != nil {
+	}
+	// Set ContentType so R2 serves the correct MIME type; omit on unknown
+	// extensions rather than defaulting to application/octet-stream.
+	if ct := mime.TypeByExtension(path.Ext(key)); ct != "" {
+		input.ContentType = aws.String(ct)
+	}
+	if _, err := s.client.PutObject(ctx, input); err != nil {
 		return fmt.Errorf("r2: PutObject %s: %w", key, err)
 	}
 	return nil

@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"io"
+	"mime"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"time"
 
@@ -40,6 +42,14 @@ func Blob(storage services.Storage, bt *services.BlobTokener) http.HandlerFunc {
 				return
 			}
 			defer func() { _ = rc.Close() }()
+			// Set Content-Type from the key's extension so the browser (and any
+			// Blob constructed from this response) tags the bytes correctly.
+			// Without this, http sniffs the body — raw MPEG frames without an
+			// ID3 header sniff as application/octet-stream, and Safari refuses
+			// to decode the resulting blob ("operation is not supported").
+			if ct := mime.TypeByExtension(path.Ext(key)); ct != "" {
+				w.Header().Set("Content-Type", ct)
+			}
 			if _, err := io.Copy(w, rc); err != nil {
 				// Headers may already be sent; nothing useful to surface.
 				return

@@ -4,6 +4,7 @@ sees a Bad Gateway and treats the job as failed without retries."""
 
 from __future__ import annotations
 
+import mimetypes
 import uuid
 from pathlib import Path
 
@@ -46,6 +47,9 @@ async def upload_from_path(path: Path, url: str) -> None:
 
     size = path.stat().st_size
     headers = {"Content-Length": str(size)}
+    ct, _ = mimetypes.guess_type(str(path))
+    if ct:
+        headers["Content-Type"] = ct
 
     async def _iter_file():
         with path.open("rb") as f:

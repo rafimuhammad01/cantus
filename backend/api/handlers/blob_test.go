@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"context"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -62,6 +63,53 @@ func TestBlob_GET_returnsFile(t *testing.T) {
 	}
 	if w.Body.String() != "hello" {
 		t.Errorf("body = %q, want %q", w.Body.String(), "hello")
+	}
+}
+
+// TestBlob_GET_setsContentTypeFromExtension locks in that GET responses carry
+// a Content-Type derived from the key's extension. Without this, a Blob built
+// from the response (frontend: `await resp.blob()`) inherits
+// application/octet-stream and Safari refuses to decode it.
+func TestBlob_GET_setsContentTypeFromExtension(t *testing.T) {
+	// cmd/server/main.go runs this at startup; the handler package test does not.
+	_ = mime.AddExtensionType(".mp3", "audio/mpeg")
+
+	cases := []struct {
+		name    string
+		objName string
+		body    string
+		wantCT  string
+	}{
+		{name: "mp3", objName: "preview-shifts/-5.mp3", body: "ID3rawmpegbytes", wantCT: "audio/mpeg"},
+		{name: "json", objName: "melody.json", body: `{"k":"C"}`, wantCT: "application/json"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, bt := newBlobFixture(t)
+			src := filepath.Join(t.TempDir(), "src.bin")
+			if err := os.WriteFile(src, []byte(tc.body), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			key := s.Key("abc12345678", tc.objName)
+			if err := s.Commit(context.Background(), key, src); err != nil {
+				t.Fatalf("Commit: %v", err)
+			}
+
+			exp := time.Now().Add(5 * time.Minute)
+			token := bt.Sign(key, "get", exp)
+			r := newBlobRequest(t, http.MethodGet, key, "get", strconv.FormatInt(exp.Unix(), 10), token, "")
+			w := httptest.NewRecorder()
+
+			handlers.Blob(s, bt)(w, r)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+			}
+			got := w.Header().Get("Content-Type")
+			// mime.TypeByExtension may return a charset suffix for some types; match prefix.
+			if !strings.HasPrefix(got, tc.wantCT) {
+				t.Errorf("Content-Type = %q, want prefix %q", got, tc.wantCT)
+			}
+		})
 	}
 }
 

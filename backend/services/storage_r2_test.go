@@ -216,6 +216,51 @@ func TestR2Storage_Commit_uploadsFile(t *testing.T) {
 	}
 }
 
+// TestR2Storage_Commit_setsContentType verifies that Commit sends the correct
+// Content-Type for known extensions and does not override the SDK default for
+// unknown ones (i.e. we don't explicitly set audio/mpeg on a .json key, etc.).
+func TestR2Storage_Commit_setsContentType(t *testing.T) {
+	cases := []struct {
+		name   string
+		key    string
+		wantCT string
+	}{
+		{"mp3 key", "abc/audio.mp3", "audio/mpeg"},
+		{"json key", "abc/melody.json", "application/json"},
+		// Unknown extension: Go's mime package returns ""; we let the SDK default
+		// (application/octet-stream) rather than asserting a specific value here.
+		// The important guarantee is that known types are set correctly.
+		{"unknown ext falls back to sdk default", "abc/file.cantusnoext", "application/octet-stream"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotCT string
+
+			s, srv := newR2WithMock(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPut {
+					gotCT = r.Header.Get("Content-Type")
+				}
+				w.WriteHeader(http.StatusOK)
+			})
+			defer srv.Close()
+
+			tmp := t.TempDir()
+			localPath := tmp + "/f"
+			if err := writeFileForR2Test(t, localPath, "data"); err != nil {
+				t.Fatalf("setup: %v", err)
+			}
+
+			if err := s.Commit(context.Background(), tc.key, localPath); err != nil {
+				t.Fatalf("Commit: %v", err)
+			}
+
+			if gotCT != tc.wantCT {
+				t.Errorf("Content-Type = %q, want %q", gotCT, tc.wantCT)
+			}
+		})
+	}
+}
+
 // writeFileForR2Test creates a file at path with the given content.
 // Extracted so it can be called from both Commit test and any future tests.
 func TestR2Storage_Verify(t *testing.T) {
