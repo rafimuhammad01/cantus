@@ -171,6 +171,11 @@ export const usePlayerStore = defineStore("player", () => {
   let setSemitonesSeq = 0;
   let setSemitonesAbort: AbortController | null = null;
 
+  // True while any setSemitones call is still in flight for the *current* seq.
+  // Gated on mySeq === setSemitonesSeq so a superseded call's finally doesn't
+  // clear the flag while the newer call is still running.
+  const shifting = ref(false);
+
   /** Fire /api/preview-shift and swap audioSrc to the returned blob. */
   async function setSemitones(n: number) {
     if (n === semitones.value) return;
@@ -181,62 +186,77 @@ export const usePlayerStore = defineStore("player", () => {
     setSemitonesAbort = controller;
     const isStale = () => mySeq !== setSemitonesSeq;
 
-    // Full-song mode (after generate): unchanged.
-    if (mode.value === "full" && melody.value !== null) {
-      semitones.value = n;
-      setAudioSrc(audioURL(videoId.value, sig.value, n));
-      const m = await getMelody(videoId.value, sig.value, n, controller.signal);
-      if (isStale()) return;
-      melody.value = m;
-      return;
-    }
-
-    // Preview mode with stems ready: fetch the transposed melody BEFORE flipping
-    // semitones, since `:key="player.semitones"` on PitchDiagram triggers a
-    // remount synchronously when the ref changes. If we flipped first the
-    // diagram would remount with the previous (stale) melody and the const
-    // targetSeries at component setup would lock in the wrong target line.
-    if (previewStemsReady.value) {
-      try {
-        const pm = await getPreviewMelody(
+    shifting.value = true;
+    try {
+      // Full-song mode (after generate): unchanged.
+      if (mode.value === "full" && melody.value !== null) {
+        semitones.value = n;
+        setAudioSrc(audioURL(videoId.value, sig.value, n));
+        const m = await getMelody(
           videoId.value,
           sig.value,
           n,
           controller.signal,
         );
         if (isStale()) return;
-        previewMelody.value = pm;
-      } catch {
-        if (isStale()) return;
-        // Non-fatal — pitch diagram will just stale until next successful fetch
+        melody.value = m;
+        return;
       }
-    }
 
-    semitones.value = n;
-
-    // n=0 → return to the unshifted source (stem when ready, raw preview otherwise)
-    if (n === 0) {
+      // Preview mode with stems ready: fetch the transposed melody BEFORE flipping
+      // semitones, since `:key="player.semitones"` on PitchDiagram triggers a
+      // remount synchronously when the ref changes. If we flipped first the
+      // diagram would remount with the previous (stale) melody and the const
+      // targetSeries at component setup would lock in the wrong target line.
       if (previewStemsReady.value) {
-        // Stems ready: use the clean instrumental stem (no chipmunk artifacts)
-        setAudioSrc(previewAudioURL(videoId.value, sig.value));
-      } else {
-        setAudioSrc(previewURL(videoId.value, sig.value));
+        try {
+          const pm = await getPreviewMelody(
+            videoId.value,
+            sig.value,
+            n,
+            controller.signal,
+          );
+          if (isStale()) return;
+          previewMelody.value = pm;
+        } catch {
+          if (isStale()) return;
+          // Non-fatal — pitch diagram will just stale until next successful fetch
+        }
       }
-      mode.value = "preview";
-      return;
-    }
 
-    // n≠0: fetch shifted preview blob (backend shifts clean stem when available)
-    let blob: Blob;
-    try {
-      blob = await previewShift(videoId.value, sig.value, n, controller.signal);
-    } catch (e) {
+      semitones.value = n;
+
+      // n=0 → return to the unshifted source (stem when ready, raw preview otherwise)
+      if (n === 0) {
+        if (previewStemsReady.value) {
+          // Stems ready: use the clean instrumental stem (no chipmunk artifacts)
+          setAudioSrc(previewAudioURL(videoId.value, sig.value));
+        } else {
+          setAudioSrc(previewURL(videoId.value, sig.value));
+        }
+        mode.value = "preview";
+        return;
+      }
+
+      // n≠0: fetch shifted preview blob (backend shifts clean stem when available)
+      let blob: Blob;
+      try {
+        blob = await previewShift(
+          videoId.value,
+          sig.value,
+          n,
+          controller.signal,
+        );
+      } catch (e) {
+        if (isStale()) return;
+        throw e;
+      }
       if (isStale()) return;
-      throw e;
+      setAudioSrc(URL.createObjectURL(blob), true);
+      mode.value = "preview-shift";
+    } finally {
+      if (mySeq === setSemitonesSeq) shifting.value = false;
     }
-    if (isStale()) return;
-    setAudioSrc(URL.createObjectURL(blob), true);
-    mode.value = "preview-shift";
   }
 
   /**
@@ -424,6 +444,7 @@ export const usePlayerStore = defineStore("player", () => {
     jobMessage,
     vocalOctaveShift,
     vocalRange,
+    shifting,
     selectSong,
     setSemitones,
     setVocalOctaveShift,

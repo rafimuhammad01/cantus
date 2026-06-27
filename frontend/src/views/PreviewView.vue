@@ -361,7 +361,7 @@ onUnmounted(() => {
         :subtitle="`${player.song?.artist ?? ''}${player.song?.album ? ' · ' + player.song.album : ''}`"
         badge="Preview · 30s"
         :playing="pitchDiagramRef?.isActive ?? false"
-        :disabled="!player.previewStemsReady"
+        :disabled="!player.previewStemsReady || shiftPending || player.shifting"
         @toggle="pitchDiagramRef?.togglePlayAndSing()"
       >
         <template #cta>
