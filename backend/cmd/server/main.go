@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,6 +18,13 @@ import (
 	"cantus/backend/logger"
 	"cantus/backend/services"
 )
+
+func init() {
+	// Pin audio MIME types so http.ServeContent doesn't fall back to byte-sniffing
+	// (which on Linux without /etc/mime.types returns application/octet-stream for
+	// lame-encoded MP3 — Safari then refuses to decode the resulting blob).
+	_ = mime.AddExtensionType(".mp3", "audio/mpeg")
+}
 
 func main() {
 	cfg, err := config.Load()
