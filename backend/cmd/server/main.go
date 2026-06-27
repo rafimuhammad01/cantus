@@ -90,7 +90,7 @@ func main() {
 	jobStore := services.NewJobStore(1 * time.Hour)
 	jobStore.StartCleanup(ctx, 5*time.Minute)
 
-	shifter := services.NewCLIShifter(cfg.RubberbandPath, services.ExecRunner{})
+	shifter := services.NewCLIShifter(cfg.RubberbandPath, cfg.FFmpegPath, services.ExecRunner{})
 
 	maxJobs := cfg.MaxConcurrentJobs
 	jobRunner := services.NewJobRunner(svc, storage, processor, shifter, jobStore, maxJobs)

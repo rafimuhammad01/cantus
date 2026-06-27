@@ -22,6 +22,7 @@ type Config struct {
 	ProcessorURL            string // PROCESSOR_URL, default "http://localhost:8090" (also inherits PYTHON_PROCESSOR_URL for backward compat)
 	ProcessorTimeoutSeconds int    // PROCESSOR_TIMEOUT_SECONDS, default 180
 	RubberbandPath          string // RUBBERBAND_PATH, default "rubberband"
+	FFmpegPath              string // FFMPEG_PATH, default "ffmpeg" (used to encode rubberband WAV output to MP3)
 
 	YTDLPCookiesPath string // YT_DLP_COOKIES_PATH, optional; when set, yt-dlp passes --cookies <path> to bypass YouTube's bot gate.
 
@@ -60,6 +61,7 @@ func Load() (*Config, error) {
 	cfg.CacheDir = getEnvString("CACHE_DIR", "./tmp/cache")
 	cfg.AllowedOrigins = getEnvString("ALLOWED_ORIGINS", "http://localhost:5173")
 	cfg.RubberbandPath = getEnvString("RUBBERBAND_PATH", "rubberband")
+	cfg.FFmpegPath = getEnvString("FFMPEG_PATH", "ffmpeg")
 	cfg.YTDLPCookiesPath = getEnvString("YT_DLP_COOKIES_PATH", "")
 
 	// Integer fields with defaults.

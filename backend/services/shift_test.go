@@ -35,9 +35,9 @@ func TestCLIShifter_Shift(t *testing.T) {
 		wantPFlag string   // expected -p semitone string (empty = rubberband not called)
 	}{
 		{
-			name:      "mp3→mp3 non-zero shift uses only rubberband",
+			name:      "mp3→mp3 non-zero shift runs rubberband then ffmpeg encode",
 			semitones: -3,
-			wantCalls: []string{"rubberband"},
+			wantCalls: []string{"rubberband", "ffmpeg"},
 			wantPFlag: "-3",
 		},
 		{
@@ -62,7 +62,7 @@ func TestCLIShifter_Shift(t *testing.T) {
 					return os.WriteFile(last, []byte("x"), 0o644)
 				},
 			}
-			s := services.NewCLIShifter("rubberband", runner)
+			s := services.NewCLIShifter("rubberband", "ffmpeg", runner)
 			if err := s.Shift(context.Background(), in, out, tt.semitones); err != nil {
 				t.Fatalf("Shift: %v", err)
 			}
@@ -111,7 +111,7 @@ func TestCLIShifter_Shift_RunnerError(t *testing.T) {
 				}
 				return nil
 			}}
-			s := services.NewCLIShifter("rubberband", runner)
+			s := services.NewCLIShifter("rubberband", "ffmpeg", runner)
 			if err := s.Shift(context.Background(), in, out, tt.semitones); err == nil {
 				t.Fatal("want error, got nil")
 			}

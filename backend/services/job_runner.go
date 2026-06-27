@@ -17,8 +17,12 @@ import (
 const (
 	PipelineRetryAttempts  = 3
 	PipelineRetryBaseDelay = 2 * time.Second
-	maxFailuresPerVideo    = 3
-	failureCooldown        = 30 * time.Minute
+	// ShiftStageTimeout caps the entire stage-4 (rubberband + ffmpeg) phase per job.
+	// Without this, a hung shifter call (e.g. libsndfile MP3 codec stall) would
+	// keep the inflight entry forever and every retry would hit the same dead job.
+	ShiftStageTimeout   = 3 * time.Minute
+	maxFailuresPerVideo = 3
+	failureCooldown     = 30 * time.Minute
 )
 
 // failureRecord tracks consecutive failures for a single videoID.
@@ -332,6 +336,10 @@ func (r *JobRunner) runPrewarm(ctx context.Context, jobID, videoID string) {
 
 // runShift executes stage 4 synchronously.
 func (r *JobRunner) runShift(ctx context.Context, jobID, videoID string, semitones int) {
+	// Hard ceiling so a hung rubberband/ffmpeg never wedges the inflight slot.
+	ctx, cancel := context.WithTimeout(ctx, ShiftStageTimeout)
+	defer cancel()
+
 	failAndRecord := func(msg string) {
 		r.failures.RecordFailure(videoID)
 		r.fail(jobID, msg)
