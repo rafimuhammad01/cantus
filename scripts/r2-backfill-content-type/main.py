@@ -34,6 +34,7 @@ import argparse
 import mimetypes
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import boto3
 from botocore.config import Config
@@ -85,6 +86,13 @@ def main() -> None:
         metavar="NAME",
         help="Override R2_BUCKET env var.",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=10,
+        metavar="N",
+        help="Parallel worker threads for HEAD + CopyObject calls (default: 10).",
+    )
     args = parser.parse_args()
 
     env = _require_env("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
@@ -94,38 +102,40 @@ def main() -> None:
 
     counts = {"ok": 0, "skip_correct": 0, "skip_unknown": 0, "fixed": 0, "dry": 0}
 
-    for obj in _paginate_objects(client, bucket, args.prefix):
-        key = obj["Key"]
+    def process(key: str) -> tuple[str, str]:
         expected_ct, _ = mimetypes.guess_type(key)
-
         if not expected_ct:
-            print(f"SKIP (unknown ext): {key}")
-            counts["skip_unknown"] += 1
-            continue
+            return ("skip_unknown", f"SKIP (unknown ext): {key}")
 
         head = client.head_object(Bucket=bucket, Key=key)
         current_ct = head.get("ContentType", "")
 
         if current_ct == expected_ct:
-            print(f"SKIP (already correct): {key}  [{current_ct}]")
-            counts["skip_correct"] += 1
-            continue
+            return ("skip_correct", f"SKIP (already correct): {key}  [{current_ct}]")
 
         if args.dry_run:
-            print(f"DRY: would fix: {key}  {current_ct!r} → {expected_ct!r}")
-            counts["dry"] += 1
-        else:
-            # CopyObject with MetadataDirective=REPLACE rewrites metadata in
-            # place — no byte movement, no re-upload of object data.
-            client.copy_object(
-                Bucket=bucket,
-                Key=key,
-                CopySource={"Bucket": bucket, "Key": key},
-                MetadataDirective="REPLACE",
-                ContentType=expected_ct,
-            )
-            print(f"FIXED: {key}  {current_ct!r} → {expected_ct!r}")
-            counts["fixed"] += 1
+            return ("dry", f"DRY: would fix: {key}  {current_ct!r} → {expected_ct!r}")
+
+        # CopyObject with MetadataDirective=REPLACE rewrites metadata in
+        # place — no byte movement, no re-upload of object data.
+        client.copy_object(
+            Bucket=bucket,
+            Key=key,
+            CopySource={"Bucket": bucket, "Key": key},
+            MetadataDirective="REPLACE",
+            ContentType=expected_ct,
+        )
+        return ("fixed", f"FIXED: {key}  {current_ct!r} → {expected_ct!r}")
+
+    with ThreadPoolExecutor(max_workers=args.workers) as ex:
+        futures = [
+            ex.submit(process, obj["Key"])
+            for obj in _paginate_objects(client, bucket, args.prefix)
+        ]
+        for fut in as_completed(futures):
+            kind, line = fut.result()
+            counts[kind] += 1
+            print(line)
 
     print()
     print("Summary:")
