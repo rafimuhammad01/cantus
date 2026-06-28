@@ -37,6 +37,10 @@ func (f *fakeRunner) SubmitPrewarm(_ string) string {
 	return "fake-prewarm-id-deadbeef"
 }
 
+func (f *fakeRunner) SubmitPreviewStems(_ string) string {
+	return "fake-preview-stems-id-deadbeef"
+}
+
 // generateRouter wires a chi router with the Generate handler at POST /api/generate.
 func generateRouter(signer *services.Signer, runner services.JobSubmitter) *chi.Mux {
 	r := chi.NewRouter()

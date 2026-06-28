@@ -101,7 +101,11 @@ type JobRunner struct {
 	semaphore       chan struct{} // capacity = maxConcurrent
 	prewarmInflight sync.Map      // key: videoID → *inflightEntry
 	shiftInflight   sync.Map      // key: "videoID|semitones" → *inflightEntry
-	failures        *VideoFailureTracker
+	// previewStemsInflight is separate from prewarmInflight because the two
+	// pipelines produce different cached outputs (preview-stems/* vs the full
+	// original/vocals/no_vocals keys) and must not dedup against each other.
+	previewStemsInflight sync.Map // key: videoID → *inflightEntry
+	failures             *VideoFailureTracker
 }
 
 // NewJobRunner creates a JobRunner with bounded concurrency. maxConcurrent is clamped to >= 1.
@@ -399,6 +403,141 @@ func (r *JobRunner) runShift(ctx context.Context, jobID, videoID string, semiton
 
 	r.failures.RecordSuccess(videoID)
 	r.update(jobID, models.StatusDone, "ready to sing")
+}
+
+// SubmitPreviewStems registers a preview-stems job (stages 1–3: download preview, separate, melody)
+// and runs it asynchronously. Dedup key is videoID. Returns the jobID immediately.
+func (r *JobRunner) SubmitPreviewStems(videoID string) string {
+	if existing, ok := r.previewStemsInflight.Load(videoID); ok {
+		return existing.(*inflightEntry).jobID
+	}
+
+	if r.failures.IsBlocked(videoID) {
+		zlog.Warn().Str("videoId", videoID).Msg("preview-stems blocked: video has exceeded failure cap")
+		jobID := newJobID()
+		r.jobStore.Create(models.Job{
+			ID:        jobID,
+			Status:    models.StatusError,
+			Message:   "video temporarily unavailable after repeated failures, try again later",
+			CreatedAt: time.Now(),
+		})
+		return jobID
+	}
+
+	jobID := newJobID()
+	entry := &inflightEntry{jobID: jobID, done: make(chan struct{})}
+
+	actual, loaded := r.previewStemsInflight.LoadOrStore(videoID, entry)
+	if loaded {
+		return actual.(*inflightEntry).jobID
+	}
+
+	r.jobStore.Create(models.Job{
+		ID:        jobID,
+		Status:    models.StatusQueued,
+		CreatedAt: time.Now(),
+	})
+
+	go func() {
+		defer func() {
+			close(entry.done)
+			r.previewStemsInflight.Delete(videoID)
+		}()
+
+		r.semaphore <- struct{}{}
+		defer func() { <-r.semaphore }()
+		r.runPreviewStems(context.Background(), jobID, videoID)
+	}()
+
+	return jobID
+}
+
+func (r *JobRunner) runPreviewStems(ctx context.Context, jobID, videoID string) {
+	failAndRecord := func(msg string) {
+		r.failures.RecordFailure(videoID)
+		r.fail(jobID, msg)
+	}
+
+	r.update(jobID, models.StatusDownloading, "downloading preview clip")
+	has, err := r.storage.Has(ctx, r.storage.Key(videoID, "preview"+AudioExt))
+	if err != nil {
+		r.fail(jobID, "storage check failed: "+err.Error())
+		return
+	}
+	if !has {
+		if err := Retry(ctx, PipelineRetryAttempts, PipelineRetryBaseDelay, func() error {
+			return r.ytSvc.DownloadPreview(ctx, videoID)
+		}); err != nil {
+			failAndRecord("download failed: " + err.Error())
+			return
+		}
+	}
+
+	r.update(jobID, models.StatusSeparating, "separating vocals from instrumental")
+	vocalsKey := r.storage.Key(videoID, "preview-stems/vocals"+AudioExt)
+	noVocalsKey := r.storage.Key(videoID, "preview-stems/no_vocals"+AudioExt)
+	vocalsHas, _ := r.storage.Has(ctx, vocalsKey)
+	noVocalsHas, _ := r.storage.Has(ctx, noVocalsKey)
+	if !vocalsHas || !noVocalsHas {
+		inURL, err := r.storage.SignGet(ctx, r.storage.Key(videoID, "preview"+AudioExt))
+		if err != nil {
+			r.fail(jobID, "sign get failed: "+err.Error())
+			return
+		}
+		vocalsPutURL, err := r.storage.SignPut(ctx, vocalsKey)
+		if err != nil {
+			r.fail(jobID, "sign put failed: "+err.Error())
+			return
+		}
+		noVocalsPutURL, err := r.storage.SignPut(ctx, noVocalsKey)
+		if err != nil {
+			r.fail(jobID, "sign put failed: "+err.Error())
+			return
+		}
+		if err := Retry(ctx, PipelineRetryAttempts, PipelineRetryBaseDelay, func() error {
+			return r.processor.Separate(ctx, inURL, vocalsPutURL, noVocalsPutURL)
+		}); err != nil {
+			failAndRecord("separate failed: " + err.Error())
+			return
+		}
+		if err := r.storage.Verify(ctx, vocalsKey); err != nil {
+			failAndRecord("vocals stem not materialized: " + err.Error())
+			return
+		}
+		if err := r.storage.Verify(ctx, noVocalsKey); err != nil {
+			failAndRecord("no_vocals stem not materialized: " + err.Error())
+			return
+		}
+	}
+
+	r.update(jobID, models.StatusMelody, "extracting melody")
+	melodyKey := r.storage.Key(videoID, "preview-stems/melody.json")
+	melodyHas, _ := r.storage.Has(ctx, melodyKey)
+	if !melodyHas {
+		vocalsURL, err := r.storage.SignGet(ctx, r.storage.Key(videoID, "preview-stems/vocals"+AudioExt))
+		if err != nil {
+			r.fail(jobID, "sign get failed: "+err.Error())
+			return
+		}
+		outURL, err := r.storage.SignPut(ctx, melodyKey)
+		if err != nil {
+			r.fail(jobID, "sign put failed: "+err.Error())
+			return
+		}
+		if err := Retry(ctx, PipelineRetryAttempts, PipelineRetryBaseDelay, func() error {
+			return r.processor.Melody(ctx, vocalsURL, outURL)
+		}); err != nil {
+			failAndRecord("melody failed: " + err.Error())
+			return
+		}
+		if err := r.storage.Verify(ctx, melodyKey); err != nil {
+			failAndRecord("melody not materialized: " + err.Error())
+			return
+		}
+	}
+
+	r.failures.RecordSuccess(videoID)
+	r.update(jobID, models.StatusDone, "stems ready")
 }
 
 // Run executes the full pipeline synchronously. Exported so tests can drive it directly.

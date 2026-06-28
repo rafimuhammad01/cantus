@@ -177,27 +177,24 @@ export async function getPreviewKey(
 }
 
 /**
- * POST /api/preview-stems — triggers Demucs + CREPE on the 30s clip.
- * Streams a keepalive-padded response; final body is {"ready":true} or {"error":"..."}.
+ * POST /api/preview-stems — enqueues Demucs + CREPE on the 30s clip.
+ * Returns immediately with {job_id}; poll /api/status/:jobId via SSE for progress.
  *
- * @param signal - optional AbortSignal; if aborted the fetch rejects so withRetry can retry.
+ * @param signal - optional AbortSignal.
  */
 export async function triggerPreviewStems(
   videoId: string,
   sig: string,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<{ job_id: string }> {
   const resp = await fetch("/api/preview-stems", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ video_id: videoId, sig }),
     signal,
   });
-  await checkOk(resp); // handles 4xx/5xx from validation phase
-  const text = await resp.text(); // may include leading whitespace keepalive bytes
-  const data = JSON.parse(text);
-  if (data.error) throw new Error(`preview-stems failed: ${data.error}`);
-  // data.ready === true
+  await checkOk(resp);
+  return resp.json() as Promise<{ job_id: string }>;
 }
 
 /**

@@ -32,7 +32,7 @@ func NewRouter(allowedOrigins []string, log zerolog.Logger, svc services.YouTube
 	mux.Get("/api/preview/{videoId}", handlers.Preview(signer, storage, svc))
 	mux.Get("/api/preview-key/{videoId}", handlers.PreviewKey(signer, storage))
 	mux.Post("/api/preview-shift", handlers.PreviewShift(signer, storage, svc, shifter, previewCoord))
-	mux.Post("/api/preview-stems", handlers.PreviewStems(signer, storage, svc, processor, previewFailures, previewCoord))
+	mux.Post("/api/preview-stems", handlers.PreviewStems(signer, jobRunner))
 	mux.Get("/api/preview-audio/{videoId}", handlers.PreviewAudio(signer, storage))
 	mux.Get("/api/preview-melody/{videoId}/{semitones}", handlers.PreviewMelody(signer, storage))
 	mux.Get("/api/audio/{videoId}/{semitones}", handlers.Audio(signer, storage))

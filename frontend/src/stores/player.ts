@@ -8,6 +8,7 @@ import {
   getMelody,
   getPreviewKey,
   audioURL,
+  statusURL,
   triggerPreviewStems,
   getPreviewMelody,
   previewAudioURL,
@@ -15,7 +16,7 @@ import {
   type MelodyResponse,
   type JobStatusName,
 } from "@/services/api";
-import { withRetry, retryPolicy } from "@/lib/retryPolicy";
+import { useSSE } from "@/composables/useSSE";
 import { hzToMidi } from "@/utils/pitch";
 
 type PlayerMode = "idle" | "preview" | "preview-shift" | "full";
@@ -98,6 +99,8 @@ export const usePlayerStore = defineStore("player", () => {
   const previewStemsReady = ref(false);
   const previewStemsLoading = ref(false); // shown by PreviewView as a spinner
   const previewStemsError = ref<string>("");
+  const previewStemsStatus = ref<JobStatusName | "idle">("idle");
+  const previewStemsMessage = ref<string>("");
 
   // Melody + key (populated after /api/melody fetches; key visible only after generate done)
   const melody = ref<MelodyResponse | null>(null);
@@ -140,6 +143,8 @@ export const usePlayerStore = defineStore("player", () => {
     previewStemsReady.value = false;
     previewStemsLoading.value = false;
     previewStemsError.value = "";
+    previewStemsStatus.value = "idle";
+    previewStemsMessage.value = "";
     melody.value = null;
     originalMelody.value = null;
     jobId.value = null;
@@ -261,35 +266,42 @@ export const usePlayerStore = defineStore("player", () => {
 
   /**
    * Trigger Demucs + CREPE on the 30s preview clip, then fetch the preview melody.
-   * Blocks ~14s warm-server / ~50s cold-server. Idempotent on the backend, so safe to call multiple times.
-   * Once complete, swaps audioSrc to the clean instrumental stem URL.
-   *
-   * Each attempt uses an AbortController with a deadline of retryPolicy.stallTimeoutMs.
-   * If the server goes silent for that long the fetch is aborted and withRetry retries.
+   * Posts to /api/preview-stems to enqueue the job, then subscribes to SSE for
+   * per-stage progress. Once done, swaps audioSrc to the clean instrumental stem URL.
    */
   async function loadPreviewStems(): Promise<void> {
     if (!videoId.value || !sig.value) return;
-    if (previewStemsReady.value) return; // idempotent — stems already loaded
-    if (previewStemsLoading.value) return; // in-flight; let it complete
+    if (previewStemsReady.value) return;
+    if (previewStemsLoading.value) return;
     previewStemsLoading.value = true;
     previewStemsError.value = "";
+    previewStemsStatus.value = "idle";
+    previewStemsMessage.value = "";
     // Capture current videoId/sig in case the song changes mid-flight.
     const vid = videoId.value;
     const s = sig.value;
+    const sse = useSSE();
     try {
-      await withRetry(() => {
-        const controller = new AbortController();
-        const stallTimer = setTimeout(
-          () => controller.abort(),
-          retryPolicy.stallTimeoutMs,
-        );
-        return triggerPreviewStems(vid, s, controller.signal).finally(() =>
-          clearTimeout(stallTimer),
-        );
+      const { job_id: jobId } = await triggerPreviewStems(vid, s);
+      await new Promise<void>((resolve, reject) => {
+        sse.open(statusURL(jobId), (ev) => {
+          previewStemsStatus.value = ev.status;
+          previewStemsMessage.value = ev.message;
+          if (ev.status === "done") {
+            resolve();
+          } else if (ev.status === "error") {
+            reject(new Error(ev.message));
+          }
+        });
+        // Surface unexpected connection loss.
+        const unwatchError = watch(sse.error, (err) => {
+          if (err) {
+            unwatchError();
+            reject(new Error(err));
+          }
+        });
       });
-      // Fetch melody at the current semitones (usually 0 on first load)
       previewMelody.value = await getPreviewMelody(vid, s, semitones.value);
-      // Swap audio source from the legacy fast preview to the clean stem
       setAudioSrc(previewAudioURL(vid, s));
       mode.value = "preview";
       previewStemsReady.value = true;
@@ -297,6 +309,7 @@ export const usePlayerStore = defineStore("player", () => {
       previewStemsError.value =
         (e as Error).message ?? "Failed to load preview stems";
     } finally {
+      sse.close();
       previewStemsLoading.value = false;
     }
   }
@@ -433,6 +446,8 @@ export const usePlayerStore = defineStore("player", () => {
     previewStemsReady,
     previewStemsLoading,
     previewStemsError,
+    previewStemsStatus,
+    previewStemsMessage,
     melody,
     originalKey,
     originalMelody,

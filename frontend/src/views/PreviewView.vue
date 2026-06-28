@@ -256,8 +256,8 @@ onUnmounted(() => {
               class="absolute inset-0 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] flex flex-col items-center justify-center gap-2"
             >
               <ProcessingStatus
-                status="separating"
-                message="Getting your accompaniment ready…"
+                :status="player.previewStemsStatus"
+                :message="player.previewStemsMessage"
                 :elapsed-stage-sec="previewStemsElapsedSec"
               />
               <p
